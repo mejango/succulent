@@ -17,7 +17,9 @@ async function fetchPage(offset: number, group: string | null): Promise<FeedPage
 
 function merge(current: ActivityEvent[], incoming: ActivityEvent[], prepend: boolean): ActivityEvent[] {
   const ids = new Set(incoming.map(event => event.id))
-  const rest = current.filter(event => !ids.has(event.id))
+  const hashes = new Set(incoming.map(event => event.txHash))
+  // A provisional row (a post shown before the indexer saw it) yields to the indexed row for its tx.
+  const rest = current.filter(event => !ids.has(event.id) && !(event.id.startsWith('pending:') && hashes.has(event.txHash)))
   return prepend ? [...incoming, ...rest] : [...rest, ...incoming]
 }
 
@@ -61,6 +63,14 @@ export function Feed({ initial, initialPinned = null }: { initial: FeedPage; ini
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runs when the pinned group changes only
   }, [group])
 
+  /** After a post, poll every few seconds until the indexer has caught up (or a minute passes). */
+  const [eager, setEager] = useState(0)
+  const onPosted = useCallback((event: ActivityEvent) => {
+    setEvents(current => [event, ...current])
+    setFresh(new Set([event.id]))
+    setEager(Date.now() + 90_000)
+  }, [])
+
   useEffect(() => {
     const tick = async () => {
       if (document.visibilityState === 'hidden') return
@@ -70,7 +80,9 @@ export function Feed({ initial, initialPinned = null }: { initial: FeedPage; ini
           const known = new Set(current.map(event => event.id))
           const arrived = page.events.filter(event => !known.has(event.id)).map(event => event.id)
           if (arrived.length) setFresh(new Set(arrived))
-          return merge(current, page.events, true)
+          const next = merge(current, page.events, true)
+          if (!next.some(event => event.id.startsWith('pending:'))) setEager(0)
+          return next
         })
         setNow(page.fetchedAt)
         setStale(false)
@@ -78,13 +90,13 @@ export function Feed({ initial, initialPinned = null }: { initial: FeedPage; ini
         setStale(true)
       }
     }
-    const timer = setInterval(tick, POLL_MS)
+    const timer = setInterval(tick, eager > Date.now() ? 3_000 : POLL_MS)
     document.addEventListener('visibilitychange', tick)
     return () => {
       clearInterval(timer)
       document.removeEventListener('visibilitychange', tick)
     }
-  }, [group])
+  }, [group, eager])
 
   const loadMore = useCallback(async () => {
     if (loading || !hasMore) return
@@ -134,7 +146,7 @@ export function Feed({ initial, initialPinned = null }: { initial: FeedPage; ini
               ))}
             </span>
           </h1>
-          <Compose />
+          <Compose onPosted={onPosted} />
         </div>
       </header>
 

@@ -54,7 +54,7 @@ test('a multi-network page goes through the omnichain deployer with a sucker per
 test('earnings splits encode per chain: one percent, a destination that can differ by network', () => {
   const owner = '0x1111111111111111111111111111111111111111'
   const wallet = '0x2222222222222222222222222222222222222222' as const
-  const artizen = { chainId: 8453, projectId: 6, name: 'Artizen', logoUri: null, peers: [{ chainId: 8453, projectId: 6 }, { chainId: 1, projectId: 9 }] }
+  const artizen = { chainId: 8453, projectId: 6, name: 'Artizen', logoUri: null, suckerGroupId: 'g', peers: [{ chainId: 8453, projectId: 6 }, { chainId: 1, projectId: 9 }] }
   const recipients = [
     { percent: 12.5, destination: { kind: 'address' as const, address: wallet } },
     { percent: 10, destination: { kind: 'page' as const, page: artizen } },

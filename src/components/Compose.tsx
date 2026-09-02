@@ -7,7 +7,7 @@ import { getEnsAddress, getPublicClient } from 'wagmi/actions'
 import { wagmiConfig } from '@/lib/wagmi'
 import { payOptionsFor, type PayOption } from '@/lib/pay-options'
 import { useAccount } from 'wagmi'
-import type { PageRef } from '@/lib/bendystraw'
+import type { ActivityEvent, PageRef } from '@/lib/bendystraw'
 import { CHAINS, type PageChainId } from '@/lib/wagmi'
 import { chainIcon, chainName, chainSlug, txUrl } from '@/lib/chains'
 import { projectLogoUrl } from '@/lib/format'
@@ -484,6 +484,8 @@ function CreatePage({ owner, onCreated, onSignIn }: { owner: `0x${string}` | und
         projectId: pages[0].projectId,
         name: name.trim(),
         logoUri: null,
+        // Not indexed yet; a post to it shows once the indexer has the page.
+        suckerGroupId: null,
         peers: pages.map(page => ({ chainId: page.chainId, projectId: page.projectId })),
       })
     } catch (caught) {
@@ -545,7 +547,7 @@ function CreatePage({ owner, onCreated, onSignIn }: { owner: `0x${string}` | und
   )
 }
 
-export function Compose() {
+export function Compose({ onPosted }: { onPosted?: (event: ActivityEvent) => void }) {
   const { address, isConnected, chain } = useAccount()
   const [sheet, setSheet] = useState<'none' | 'post' | 'create'>('none')
   // Sign-in replaces the sheet rather than stacking on it: remember which sheet to bring back once
@@ -642,6 +644,25 @@ export function Compose() {
         onStep: setStep,
       })
       setPosted({ hash, chainId: page.chainId })
+      // Show the post in the feed now; the indexer's own row replaces this one when it lands.
+      onPosted?.({
+        id: `pending:${hash}`,
+        chainId: page.chainId,
+        projectId: page.projectId,
+        timestamp: Math.floor(Date.now() / 1000),
+        from: address,
+        txHash: hash,
+        suckerGroupId: page.suckerGroupId,
+        project: {
+          name: page.name,
+          handle: null,
+          logoUri: page.logoUri,
+          tokenSymbol: paying.viaRouter ? null : paying.symbol,
+          decimals: paying.viaRouter ? null : paying.decimals,
+          deployErc20Events: { items: [] },
+        },
+        payEvent: { amount: amountWei.toString(), amountUsd: null, beneficiary: address, memo: memo.trim(), newlyIssuedTokenCount: '0' },
+      })
       setMemo('')
       setAmount('')
     } catch (caught) {

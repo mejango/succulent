@@ -119,12 +119,13 @@ export type PageRef = {
   projectId: number
   name: string | null
   logoUri: string | null
+  suckerGroupId: string | null
   /** The same page's ids on every chain it lives on (its sucker group), itself included. */
   peers: { chainId: number; projectId: number }[]
 }
 type RawPageRef = Omit<PageRef, 'peers'> & { suckerGroup: { projects: { items: { chainId: number; projectId: number }[] } } | null }
 
-const PAGE_FIELDS = 'chainId projectId name logoUri suckerGroup { projects { items { chainId projectId } } }'
+const PAGE_FIELDS = 'chainId projectId name logoUri suckerGroupId suckerGroup { projects { items { chainId projectId } } }'
 
 function withPeers(page: RawPageRef): PageRef {
   const { suckerGroup, ...rest } = page
