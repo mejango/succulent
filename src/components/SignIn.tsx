@@ -82,9 +82,8 @@ export function SignedInAs() {
   }
 
   return (
-    <p className="flex items-center gap-2 font-mono text-[11px] text-stem">
-      <span title={address}>from {truncateAddress(address)}</span>
-      <span aria-hidden>·</span>
+    <p className="flex items-center gap-3 font-mono text-[11px] text-stem">
+      <span title={address}>{truncateAddress(address)}</span>
       <button type="button" onClick={signOut} disabled={pending} className="underline-offset-2 hover:underline disabled:opacity-50">
         {pending ? 'signing out' : 'sign out'}
       </button>

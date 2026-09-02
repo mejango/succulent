@@ -654,7 +654,10 @@ export function Compose() {
 
   return (
     <>
-      <div className="flex items-center gap-2">
+      <div className="flex flex-col items-end gap-1.5">
+        {/* Who is signed in sits above the actions, not inside the forms. */}
+        {isConnected && address ? <SignedInAs /> : null}
+        <div className="flex items-center gap-2">
         <button
           type="button"
           onClick={() => setSheet('create')}
@@ -672,6 +675,7 @@ export function Compose() {
         >
           Post
         </button>
+        </div>
       </div>
 
       <Sheet open={sheet === 'post'} onClose={close} title={posted ? 'Posted' : page ? `Post to ${page.name?.trim() || `Page ${page.projectId}`}` : 'Post'}>
@@ -765,7 +769,6 @@ export function Compose() {
                 <button type="button" className={primary} disabled={busy || amountBad || options === null || (!memo.trim() && amountWei === 0n)} onClick={submit}>
                   {busy ? step ?? 'Confirm in your wallet' : amountWei > 0n ? 'Post and pay' : 'Post'}
                 </button>
-                <SignedInAs />
               </>
             ) : (
               <SignIn onOpen={stepAside} />
