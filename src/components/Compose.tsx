@@ -661,7 +661,7 @@ export function Compose() {
         <button
           type="button"
           onClick={() => setSheet('create')}
-          className="border border-pine px-3.5 py-1.5 text-[13px] font-medium text-pine"
+          className="inline-flex h-8 items-center border border-pine px-3.5 text-[13px] font-medium text-pine"
         >
           New page
         </button>
@@ -671,7 +671,7 @@ export function Compose() {
             setPosted(null)
             setSheet('post')
           }}
-          className="bg-pine px-3.5 py-1.5 text-[13px] font-medium text-farina"
+          className="inline-flex h-8 items-center border border-pine bg-pine px-3.5 text-[13px] font-medium text-farina"
         >
           Post
         </button>
