@@ -6,7 +6,7 @@ import { createJBCenterClient } from '@bananapus/nana-sdk-core/jbcenter'
 import { buildPayTx, getProjectCreationFee, resolvePaymentTerminal } from '@bananapus/nana-sdk-core/v6'
 import { getPublicClient, readContract, switchChain, waitForTransactionReceipt, writeContract } from 'wagmi/actions'
 import { encodeFunctionData, erc20Abi, parseEventLogs, toHex, type Address, type Hex, type Log, type PublicClient } from 'viem'
-import { jbControllerAbi } from '@bananapus/nana-sdk-core'
+import { jbControllerAbi, jbProjectsAbi } from '@bananapus/nana-sdk-core'
 import { pageLaunchTx, pageOmnichainLaunchTx, type PageSplit } from './page-launch'
 import type { PageRef } from './bendystraw'
 import { chainName } from './chains'
@@ -139,13 +139,17 @@ export function splitsOn(chainId: number, recipients: readonly PageRecipient[], 
 }
 
 /**
- * The project id from a launch receipt: JBController's LaunchProject event, whichever controller
- * emitted it (the omnichain deployer's controller differs from the SDK's address table).
+ * The project id from a launch receipt. JBProjects' `Create(projectId, owner, caller)` is the one
+ * event every launch path emits with a stable signature; the controller behind the omnichain
+ * deployer emits a LaunchProject the SDK's ABI does not decode, so that is only the fallback.
  */
 export function projectIdFromLogs(logs: Log[]): number | null {
-  const events = parseEventLogs({ abi: jbControllerAbi, eventName: 'LaunchProject', logs, strict: false })
-  const projectId = events[0]?.args.projectId
-  return projectId === undefined ? null : Number(projectId)
+  const created = parseEventLogs({ abi: jbProjectsAbi, eventName: 'Create', logs, strict: false })
+  const fromProjects = created[0]?.args.projectId
+  if (fromProjects !== undefined) return Number(fromProjects)
+  const launched = parseEventLogs({ abi: jbControllerAbi, eventName: 'LaunchProject', logs, strict: false })
+  const fromController = launched[0]?.args.projectId
+  return fromController === undefined ? null : Number(fromController)
 }
 
 async function pinPage(args: { name: string; logo: File | null; onStep: (step: string) => void }): Promise<string> {
