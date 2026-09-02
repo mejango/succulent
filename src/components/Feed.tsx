@@ -1,0 +1,240 @@
+'use client'
+
+import { useCallback, useEffect, useRef, useState } from 'react'
+import type { ActivityEvent, FeedPage } from '@/lib/bendystraw'
+import { combinedActivityParts, groupSameTxEvents } from '@/lib/activity'
+import { addressUrl, chainIcon, chainName, chainSlug, projectUrl, txUrl } from '@/lib/chains'
+import { formatDate, formatTokenAmount, formatUsd18, projectLogoUrl, timeAgo, truncateAddress } from '@/lib/format'
+import { Compose } from './Compose'
+
+const POLL_MS = 15_000
+
+async function fetchPage(offset: number): Promise<FeedPage> {
+  const response = await fetch(`/api/activity?offset=${offset}`)
+  if (!response.ok) throw new Error('Activity unavailable')
+  return response.json()
+}
+
+function merge(current: ActivityEvent[], incoming: ActivityEvent[], prepend: boolean): ActivityEvent[] {
+  const ids = new Set(incoming.map(event => event.id))
+  const rest = current.filter(event => !ids.has(event.id))
+  return prepend ? [...incoming, ...rest] : [...rest, ...incoming]
+}
+
+export function Feed({ initial }: { initial: FeedPage }) {
+  const [events, setEvents] = useState(initial.events)
+  const [hasMore, setHasMore] = useState(initial.hasMore)
+  const [loading, setLoading] = useState(false)
+  const [stale, setStale] = useState(false)
+  // Server and client share one clock at hydration; each poll advances it.
+  const [now, setNow] = useState(initial.fetchedAt)
+  const [fresh, setFresh] = useState<Set<string>>(new Set())
+  const markerRef = useRef<HTMLLIElement>(null)
+
+  useEffect(() => {
+    const tick = async () => {
+      if (document.visibilityState === 'hidden') return
+      try {
+        const page = await fetchPage(0)
+        setEvents(current => {
+          const known = new Set(current.map(event => event.id))
+          const arrived = page.events.filter(event => !known.has(event.id)).map(event => event.id)
+          if (arrived.length) setFresh(new Set(arrived))
+          return merge(current, page.events, true)
+        })
+        setNow(page.fetchedAt)
+        setStale(false)
+      } catch {
+        setStale(true)
+      }
+    }
+    const timer = setInterval(tick, POLL_MS)
+    document.addEventListener('visibilitychange', tick)
+    return () => {
+      clearInterval(timer)
+      document.removeEventListener('visibilitychange', tick)
+    }
+  }, [])
+
+  const loadMore = useCallback(async () => {
+    if (loading || !hasMore) return
+    setLoading(true)
+    try {
+      const page = await fetchPage(events.length)
+      setEvents(current => merge(current, page.events, false))
+      setHasMore(page.hasMore)
+    } catch {
+      setHasMore(false)
+    } finally {
+      setLoading(false)
+    }
+  }, [events.length, hasMore, loading])
+
+  useEffect(() => {
+    const marker = markerRef.current
+    if (!marker || !hasMore || loading) return
+    const observer = new IntersectionObserver(
+      entries => entries.some(entry => entry.isIntersecting) && loadMore(),
+      { rootMargin: '600px 0px' },
+    )
+    observer.observe(marker)
+    return () => observer.disconnect()
+  }, [hasMore, loadMore, loading])
+
+  const groups = groupSameTxEvents(events)
+
+  return (
+    <>
+      <header className="sticky top-0 z-10 bg-farina/85 px-4 pt-[max(1.25rem,env(safe-area-inset-top))] pb-4 backdrop-blur-md">
+        <div className="flex items-center justify-between">
+          <h1 aria-label="succulent" className="flex items-center font-display text-[2.125rem] leading-none tracking-[-0.02em] text-pine">
+            {/* A 2.5rem box so its center is known: header padding 1rem + 1.25rem. The stem is at 3.5rem, so the
+                slide is exactly 1.25rem. The outer span slides, the inner one gulps, so the transforms don't fight. */}
+            <span aria-hidden className="melon-slide inline-flex size-10 items-center justify-center">
+              <span className="melon inline-block text-[2.5rem] leading-none">🍉</span>
+            </span>
+            {/* Shown for a beat on load, then eaten one letter at a time, left to right, as the melon arrives. */}
+            <span aria-hidden className="wordmark ml-2 inline-flex whitespace-nowrap">
+              {[...'succulent'].map((letter, index) => (
+                <span key={index} className="letter inline-block overflow-hidden" style={{ '--i': index } as React.CSSProperties}>
+                  {letter}
+                </span>
+              ))}
+            </span>
+          </h1>
+          <Compose />
+        </div>
+      </header>
+
+      {stale ? (
+        <p className="mx-4 mb-2 border border-rose/40 px-3 py-2 font-mono text-[11px] text-rose">
+          Connection paused. Retrying every 15 seconds.
+        </p>
+      ) : null}
+
+      {groups.length === 0 ? (
+        <p className="px-4 py-24 text-center text-sm text-stem">
+          Nothing has landed yet. New activity shows here within seconds.
+        </p>
+      ) : (
+        <ol className="pb-16 pt-2">
+          {groups.map(group => (
+            <Row key={group[0].id} group={group} now={now} fresh={fresh.has(group[0].id)} />
+          ))}
+          {hasMore || loading ? (
+            <li ref={markerRef} aria-live="polite" className="grid grid-cols-[3.5rem_1fr]">
+              <span />
+              <span className="flex h-16 items-center border-l border-bloom pl-4 font-mono text-[11px] text-stem-light">
+                {loading ? 'loading' : 'older'}
+              </span>
+            </li>
+          ) : null}
+        </ol>
+      )}
+    </>
+  )
+}
+
+function signedAmount(
+  event: ActivityEvent,
+  amountUsd: string | null | undefined,
+  amountRaw: string | null | undefined,
+): string | null {
+  try {
+    if (amountUsd && BigInt(amountUsd) > 0n) return formatUsd18(amountUsd)
+    const project = event.project
+    if (amountRaw && project?.tokenSymbol && project.decimals !== null && BigInt(amountRaw) > 0n) {
+      return `${formatTokenAmount(amountRaw, project.decimals)} ${project.tokenSymbol.replace(/^\$+/, '')}`
+    }
+  } catch {
+    // Unparseable amount: show none.
+  }
+  return null
+}
+
+function Row({ group, now, fresh }: { group: ActivityEvent[]; now: number; fresh: boolean }) {
+  const event = group[0]
+  const name = event.project?.name?.trim() || `Project ${event.projectId}`
+  const { actor, action, direction, memo, amountUsd, amountRaw } = combinedActivityParts(group)
+  const amount = signedAmount(event, amountUsd, amountRaw)
+  const relative = timeAgo(event.timestamp, now)
+  const actorHref = addressUrl(event.chainId, actor)
+  const txHref = txUrl(event.chainId, event.txHash)
+  const project = projectUrl(event.chainId, event.projectId)
+
+  return (
+    <li className={`grid grid-cols-[3.5rem_1fr] ${fresh ? 'animate-bloom' : ''}`}>
+      <time
+        dateTime={new Date(event.timestamp * 1000).toISOString()}
+        title={formatDate(event.timestamp)}
+        className="pr-3 pt-4 text-right font-mono text-[11px] leading-none text-stem"
+      >
+        {relative}
+      </time>
+      <div className="relative border-l border-bloom py-3.5 pl-4 pr-4">
+        {/* The leaf node on the stem. */}
+        <span aria-hidden className="absolute -left-[3.5px] top-[1.15rem] size-1.5 rounded-full bg-pine" />
+        <div className="flex items-center gap-2.5">
+          <a href={project} aria-label={`Open ${name} on juicebox.money`} className="shrink-0">
+            <Logo name={name} logoUri={event.project?.logoUri ?? null} />
+          </a>
+          <a href={project} className="min-w-0 flex-1 truncate text-[15px] font-medium leading-tight text-pine">
+            {name}
+          </a>
+          <a
+            href={txHref ?? undefined}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label={`View transaction on ${chainName(event.chainId)}`}
+            className="shrink-0 font-mono text-[11px] text-stem-light hover:opacity-70"
+          >
+            {chainIcon(event.chainId) ? (
+              // eslint-disable-next-line @next/next/no-img-element -- static local svg
+              <img src={chainIcon(event.chainId)!} alt="" width={16} height={16} className="rounded-full" />
+            ) : (
+              chainSlug(event.chainId)
+            )}
+          </a>
+        </div>
+        <p className="mt-2 text-[13px] leading-relaxed text-stem">
+          {actorHref ? (
+            <a href={actorHref} target="_blank" rel="noopener noreferrer" title={actor} className="font-mono text-[12px] text-pine underline decoration-bloom underline-offset-2">
+              {truncateAddress(actor)}
+            </a>
+          ) : (
+            <span title={actor} className="font-mono text-[12px] text-pine">{truncateAddress(actor)}</span>
+          )}{' '}
+          {action}
+        </p>
+        {memo ? <p className="mt-1.5 break-words text-[13px] leading-relaxed text-pine">“{memo}”</p> : null}
+        {amount ? (
+          <p
+            className={`mt-2 font-mono text-sm font-medium ${
+              direction === 'in' ? 'text-moss' : direction === 'out' ? 'text-rose' : 'text-pine'
+            }`}
+          >
+            {direction === 'in' ? '+' : direction === 'out' ? '−' : ''}
+            {amount}
+          </p>
+        ) : null}
+      </div>
+    </li>
+  )
+}
+
+function Logo({ name, logoUri }: { name: string; logoUri: string | null }) {
+  const src = projectLogoUrl(logoUri)
+  const [failed, setFailed] = useState(false)
+  return (
+    <span
+      aria-hidden
+      className="relative flex size-8 items-center justify-center overflow-hidden rounded-full bg-farina-deep font-display text-[13px] text-pine"
+    >
+      {name[0].toUpperCase()}
+      {src && !failed ? (
+        // eslint-disable-next-line @next/next/no-img-element -- untrusted remote logo, no optimizer
+        <img src={src} alt="" loading="lazy" decoding="async" onError={() => setFailed(true)} className="absolute inset-0 size-full object-cover" />
+      ) : null}
+    </span>
+  )
+}

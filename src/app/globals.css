@@ -1,0 +1,148 @@
+@import "tailwindcss";
+
+@theme {
+  /* The plant: powdery farina ground, pine ink, stem greys, moss for inflows, stressed rose tips for outflows. */
+  --color-farina: #E4EAE2;
+  --color-farina-deep: #D6DED4;
+  --color-pine: #1B2C27;
+  --color-stem: #5C7066;
+  --color-stem-light: #8A9A91;
+  --color-bloom: #C4CFC3;
+  --color-moss: #2C6A4D;
+  --color-moss-light: #DCE9E0;
+  --color-rose: #B94A6A;
+  --color-rose-light: #F0DCE3;
+  --font-sans: var(--font-plex), -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, "SF Mono", Menlo, monospace;
+  --font-display: var(--font-young-serif), Georgia, 'Times New Roman', serif;
+  --animate-bloom: bloom 1.6s ease-out 1;
+  --animate-pulse-dot: pulse-dot 2.4s ease-in-out infinite;
+
+  @keyframes bloom {
+    from { background-color: var(--color-moss-light); }
+    to { background-color: transparent; }
+  }
+  @keyframes pulse-dot {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.45; transform: scale(0.7); }
+  }
+}
+
+:root {
+  color-scheme: light;
+}
+
+html {
+  @apply antialiased;
+  background: var(--color-farina);
+}
+
+body {
+  @apply bg-farina font-sans text-pine;
+  font-feature-settings: "tnum" 1, "ss01" 1;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-moss);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-bloom, .animate-pulse-dot { animation: none; }
+}
+
+/* Native dialog as a sheet: the element is the full-viewport backdrop catcher. */
+dialog.sheet {
+  position: fixed;
+  inset: 0;
+  border: 0;
+}
+
+/* Host for Para's overlay: top-layer membership only, no backdrop, no size while closed
+   (Para keeps a warm-up iframe in this subtree, so it must stay display: block). */
+dialog.ui-modal-host {
+  display: block;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  overflow: visible;
+  background-color: transparent;
+  pointer-events: none;
+}
+dialog.ui-modal-host[open] {
+  width: 100%;
+  height: 100%;
+  pointer-events: auto;
+}
+dialog.ui-modal-host::backdrop {
+  background-color: transparent;
+}
+
+/* The melon eats the wordmark. Timeline: hold (0–0.6s), tilt toward the letters (0.6–0.72s), slide onto
+   the stem while the first letter goes (0.72–0.87s), chew through the rest left to right (45ms a letter),
+   straighten up once the last one is gone (~1.2s). */
+@keyframes eat {
+  to { max-width: 0; }
+}
+@keyframes tilt {
+  to { rotate: 42deg; scale: 1.22; }
+}
+@keyframes chew {
+  0%, 100% { rotate: 42deg; scale: 1.22; }
+  50% { rotate: 30deg; scale: 1.28; }
+}
+@keyframes untilt {
+  from { rotate: 42deg; scale: 1.22; }
+  to { rotate: 0deg; scale: 1; }
+}
+@keyframes to-stem {
+  to { transform: translateX(1.25rem); }
+}
+.letter {
+  max-width: 2ch;
+  /* No fade: each glyph snaps away on its own beat, first letter first (--i counts from the left). */
+  animation: eat 1ms linear calc(0.82s + var(--i) * 45ms) forwards;
+}
+.melon {
+  transform-origin: 50% 60%;
+  animation:
+    tilt 0.12s ease-out 0.6s forwards,
+    chew 0.18s ease-in-out 0.82s 2,
+    untilt 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) 1.2s forwards;
+}
+.melon-slide {
+  animation: to-stem 0.15s cubic-bezier(0.4, 0, 0.2, 1) 0.72s forwards;
+}
+@media (prefers-reduced-motion: reduce) {
+  .wordmark { display: none; }
+  .melon { animation: none; }
+  .melon-slide { animation: none; transform: translateX(1.25rem); }
+}
+
+@layer components {
+  /* Native selects: hide the browser caret and draw our own (stem), same as juicebox.money; pair with pr-8. */
+  .select-caret {
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%235C7066' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    cursor: pointer;
+  }
+  .select-caret:disabled {
+    background-image: none;
+    cursor: default;
+  }
+  /* While a select's options are still being read: same caret, lighter, and no interaction. */
+  .select-caret-idle {
+    background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%238A9A91' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    pointer-events: none;
+  }
+}
