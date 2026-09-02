@@ -146,3 +146,13 @@ dialog.ui-modal-host::backdrop {
     pointer-events: none;
   }
 }
+
+/* iOS Safari zooms the page when a field under 16px takes focus. On touch devices every field is 16px, full
+   stop. Deliberately unlayered so it outranks the per-field text-[..px] utilities. */
+@media (pointer: coarse) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}

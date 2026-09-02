@@ -319,7 +319,7 @@ function Recipients({
                       value={recipient.percent}
                       disabled={disabled}
                       onChange={event => update(index, { percent: Math.max(0, Math.min(100, Number(event.target.value) || 0)) })}
-                      className={`${small} w-16 text-right`}
+                      className={`${small} w-16 text-right pointer-coarse:w-20`}
                     />
                     <span className="font-mono text-[12px] text-stem">%</span>
                   </span>
@@ -720,7 +720,7 @@ export function Compose() {
                 {/* The token lives inside the field, like juicebox.money's pay card. A native select sizes to its
                     longest option, so an invisible mirror of the one showing sets the width instead. */}
                 <span className="relative inline-block">
-                  <span aria-hidden className={`invisible block whitespace-pre py-2.5 pl-3 font-mono text-[12px] ${options && options.length < 2 ? 'pr-3' : 'pr-8'}`}>
+                  <span aria-hidden className={`invisible block whitespace-pre py-2.5 pl-3 font-mono text-[12px] pointer-coarse:text-base ${options && options.length < 2 ? 'pr-3' : 'pr-8'}`}>
                     {option?.symbol ?? 'ETH'}
                   </span>
                 <select
