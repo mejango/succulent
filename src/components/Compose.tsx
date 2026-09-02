@@ -705,8 +705,8 @@ export function Compose() {
               <span className="text-pine">{chainName(page.chainId)}</span>
             )}
             </p>
-            <textarea className={`${field} min-h-28 resize-none`} placeholder="Let ’em know" value={memo} maxLength={280} onChange={event => setMemo(event.target.value)} autoFocus={AUTO_FOCUS} />
-            <label className="block">
+            <textarea className={`${field} block min-h-28 resize-none`} placeholder="Let ’em know" value={memo} maxLength={280} onChange={event => setMemo(event.target.value)} autoFocus={AUTO_FOCUS} />
+            <label className="-mt-1 block">
               <span className="font-mono text-[11px] text-stem">Optionally, add a payment</span>
               <span className="mt-1 flex items-stretch border border-bloom bg-white/60 focus-within:border-moss">
                 <input
