@@ -2,15 +2,15 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ActivityEvent, FeedPage, PinnedPage } from '@/lib/bendystraw'
-import { ACTIVITY_FILTERS, activityFilterOf, combinedActivityParts, groupSameTxEvents, type ActivityFilter } from '@/lib/activity'
+import { ACTIVITY_FILTERS, combinedActivityParts, groupSameTxEvents, type ActivityFilter } from '@/lib/activity'
 import { addressUrl, chainIcon, chainName, chainSlug, pagePath, projectUrl, txUrl } from '@/lib/chains'
 import { formatDate, formatTokenAmount, formatUsd18, projectLogoUrl, timeAgo, truncateAddress } from '@/lib/format'
 import { Compose } from './Compose'
 
 const POLL_MS = 15_000
 
-async function fetchPage(offset: number, group: string | null): Promise<FeedPage> {
-  const response = await fetch(`/api/activity?offset=${offset}${group ? `&group=${group}` : ''}`)
+async function fetchPage(offset: number, group: string | null, kind: ActivityFilter | null = null): Promise<FeedPage> {
+  const response = await fetch(`/api/activity?offset=${offset}${group ? `&group=${group}` : ''}${kind ? `&kind=${kind}` : ''}`)
   if (!response.ok) throw new Error('Activity unavailable')
   return response.json()
 }
@@ -42,12 +42,12 @@ export function Feed({ initial, initialPinned = null }: { initial: FeedPage; ini
   const [category, setCategory] = useState<ActivityFilter | null>(null)
   const group = pinned?.group ?? null
 
-  // Pinning or unpinning a page restarts the list from the top for that scope.
+  // Pinning a page or picking a category restarts the list from the top for that scope, from the indexer.
   useEffect(() => {
-    if (pinned === initialPinned && events === initial.events) return
+    if (pinned === initialPinned && category === null && events === initial.events) return
     let live = true
     setLoading(true)
-    fetchPage(0, group)
+    fetchPage(0, group, category)
       .then(page => {
         if (!live) return
         setEvents(page.events)
@@ -60,8 +60,8 @@ export function Feed({ initial, initialPinned = null }: { initial: FeedPage; ini
     return () => {
       live = false
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs when the pinned group changes only
-  }, [group])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs when the scope (group, category) changes only
+  }, [group, category])
 
   /** After a post, poll every few seconds until the indexer has caught up (or a minute passes). */
   const [eager, setEager] = useState(0)
@@ -75,7 +75,7 @@ export function Feed({ initial, initialPinned = null }: { initial: FeedPage; ini
     const tick = async () => {
       if (document.visibilityState === 'hidden') return
       try {
-        const page = await fetchPage(0, group)
+        const page = await fetchPage(0, group, category)
         setEvents(current => {
           const known = new Set(current.map(event => event.id))
           const arrived = page.events.filter(event => !known.has(event.id)).map(event => event.id)
@@ -96,13 +96,13 @@ export function Feed({ initial, initialPinned = null }: { initial: FeedPage; ini
       clearInterval(timer)
       document.removeEventListener('visibilitychange', tick)
     }
-  }, [group, eager])
+  }, [group, category, eager])
 
   const loadMore = useCallback(async () => {
     if (loading || !hasMore) return
     setLoading(true)
     try {
-      const page = await fetchPage(events.length, group)
+      const page = await fetchPage(events.length, group, category)
       setEvents(current => merge(current, page.events, false))
       setHasMore(page.hasMore)
     } catch {
@@ -110,7 +110,7 @@ export function Feed({ initial, initialPinned = null }: { initial: FeedPage; ini
     } finally {
       setLoading(false)
     }
-  }, [events.length, hasMore, loading, group])
+  }, [events.length, hasMore, loading, group, category])
 
   useEffect(() => {
     const marker = markerRef.current
@@ -123,9 +123,7 @@ export function Feed({ initial, initialPinned = null }: { initial: FeedPage; ini
     return () => observer.disconnect()
   }, [hasMore, loadMore, loading])
 
-  const groups = groupSameTxEvents(events).filter(
-    entry => category === null || entry.some(event => activityFilterOf(event) === category),
-  )
+  const groups = groupSameTxEvents(events)
 
   return (
     <>

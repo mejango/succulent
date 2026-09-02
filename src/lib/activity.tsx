@@ -35,6 +35,28 @@ export const ACTIVITY_FILTERS = [
 ] as const
 export type ActivityFilter = (typeof ACTIVITY_FILTERS)[number][0]
 
+/** The indexed event fields a filter selects, for the indexer's where clause. */
+export const ACTIVITY_FILTER_FIELDS: Record<ActivityFilter, readonly string[]> = {
+  pay: ['payEvent'],
+  cashOut: ['cashOutTokensEvent'],
+  buybackSwap: ['swapEvent'],
+  tokenMint: ['mintTokensEvent'],
+  payout: ['sendPayoutsEvent'],
+  reserved: ['sendReservedTokensToSplitsEvent'],
+  autoIssue: ['autoIssueEvent'],
+  nftMint: ['mintNftEvent'],
+  shopItem: ['addNftTierEvent', 'removeNftTierEvent'],
+  loan: ['borrowLoanEvent', 'repayLoanEvent', 'liquidateLoanEvent'],
+  bridgeClaim: ['bridgeClaimEvent'],
+  projectCreate: ['projectCreateEvent'],
+  reconfigure: ['rulesetQueuedEvent'],
+  tokenDeploy: ['deployErc20Event'],
+  infoUpdate: ['setUriEvent'],
+  ownershipTransfer: ['projectTransferEvent'],
+  addToBalance: ['addToBalanceEvent'],
+  buybackPool: ['buybackPoolEvent'],
+}
+
 export function activityFilterOf(event: ActivityEvent): ActivityFilter | null {
   if (event.payEvent) return 'pay'
   if (event.cashOutTokensEvent) return 'cashOut'

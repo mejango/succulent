@@ -52,9 +52,9 @@ const EVENT_KINDS = [
 ] as const
 
 /** `suckerGroupId: null` in a where clause matches nothing, so the filter is only written when there is a group. */
-const query = (withGroup: boolean) => `query($limit: Int!, $offset: Int!${withGroup ? ', $group: String!' : ''}) {
+const query = (withGroup: boolean, kinds: readonly string[] = EVENT_KINDS) => `query($limit: Int!, $offset: Int!${withGroup ? ', $group: String!' : ''}) {
   activityEvents(
-    where: { version: 6, ${withGroup ? 'suckerGroupId: $group, ' : ''}OR: [${EVENT_KINDS.map(kind => `{ ${kind}_not: null }`).join(' ')}] }
+    where: { version: 6, ${withGroup ? 'suckerGroupId: $group, ' : ''}OR: [${kinds.map(kind => `{ ${kind}_not: null }`).join(' ')}] }
     orderBy: "timestamp"
     orderDirection: "desc"
     limit: $limit
@@ -89,11 +89,17 @@ const query = (withGroup: boolean) => `query($limit: Int!, $offset: Int!${withGr
 }`
 
 /** Newest V6 events across every project. Server-side only. */
-export async function getRecentActivity(limit: number, offset: number, group: string | null = null): Promise<ActivityEvent[]> {
+export async function getRecentActivity(
+  limit: number,
+  offset: number,
+  group: string | null = null,
+  /** Indexed event fields to include; default every kind the feed shows. */
+  kinds: readonly string[] = EVENT_KINDS,
+): Promise<ActivityEvent[]> {
   const response = await fetch(ENDPOINT, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ query: query(group !== null), variables: group ? { limit, offset, group } : { limit, offset } }),
+    body: JSON.stringify({ query: query(group !== null, kinds), variables: group ? { limit, offset, group } : { limit, offset } }),
     signal: AbortSignal.timeout(9_000),
     next: { revalidate: 10 },
   })
@@ -109,8 +115,8 @@ export async function getRecentActivity(limit: number, offset: number, group: st
 export type FeedPage = { events: ActivityEvent[]; hasMore: boolean; fetchedAt: number }
 
 /** One feed page plus the clock it was read at, so server and client agree on "how long ago". */
-export async function getFeedPage(offset: number, group: string | null = null): Promise<FeedPage> {
-  const page = await getRecentActivity(PAGE_SIZE + 1, offset, group)
+export async function getFeedPage(offset: number, group: string | null = null, kinds?: readonly string[]): Promise<FeedPage> {
+  const page = await getRecentActivity(PAGE_SIZE + 1, offset, group, kinds)
   return { events: page.slice(0, PAGE_SIZE), hasMore: page.length > PAGE_SIZE, fetchedAt: Date.now() }
 }
 
