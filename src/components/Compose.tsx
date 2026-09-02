@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { isAddress, parseUnits, type Address } from 'viem'
 import { normalize } from 'viem/ens'
 import { getEnsAddress, getPublicClient } from 'wagmi/actions'
@@ -15,6 +15,7 @@ import { createPage, destinationExistsOn, destinationLabel, destinationOn, failu
 import { Sheet } from './Sheet'
 import { X } from '@/components/ui/icons'
 import { SignIn, SignedInAs } from './SignIn'
+import { useParaAuth } from '@/providers/ParaAuthContext'
 
 /** Focus the first field on open only where a keyboard is already there; on touch devices it would zoom and cover the sheet. */
 const AUTO_FOCUS = typeof window !== 'undefined' && !window.matchMedia('(pointer: coarse)').matches
@@ -450,7 +451,7 @@ function Recipients({
   )
 }
 
-function CreatePage({ owner, onCreated }: { owner: `0x${string}` | undefined; onCreated: (page: PageRef) => void }) {
+function CreatePage({ owner, onCreated, onSignIn }: { owner: `0x${string}` | undefined; onCreated: (page: PageRef) => void; onSignIn: () => void }) {
   const { chain } = useAccount()
   const [name, setName] = useState('')
   const [logo, setLogo] = useState<File | null>(null)
@@ -540,7 +541,7 @@ function CreatePage({ owner, onCreated }: { owner: `0x${string}` | undefined; on
           {step ?? (chainIds.length > 1 ? `Create page on ${chainIds.length} networks` : 'Create page')}
         </button>
       ) : (
-        <SignIn />
+        <SignIn onOpen={onSignIn} />
       )}
       {error ? <p className="text-[13px] text-rose">{error}</p> : null}
     </div>
@@ -550,6 +551,27 @@ function CreatePage({ owner, onCreated }: { owner: `0x${string}` | undefined; on
 export function Compose() {
   const { address, isConnected, chain } = useAccount()
   const [sheet, setSheet] = useState<'none' | 'post' | 'create'>('none')
+  // Sign-in replaces the sheet rather than stacking on it: remember which sheet to bring back once
+  // Para's sheet has opened and closed. State inside the sheets survives because they stay mounted.
+  const { modalOpen: paraOpen } = useParaAuth()
+  const [resume, setResume] = useState<'post' | 'create' | null>(null)
+  const sawParaOpen = useRef(false)
+  const stepAside = () => {
+    setResume(sheet === 'none' ? null : sheet)
+    sawParaOpen.current = false
+    setSheet('none')
+  }
+  useEffect(() => {
+    if (!resume) return
+    if (paraOpen) {
+      sawParaOpen.current = true
+      return
+    }
+    if (sawParaOpen.current) {
+      setSheet(resume)
+      setResume(null)
+    }
+  }, [paraOpen, resume])
   /** A collapsed page lives on several chains; post on the wallet's chain when it is one of them. */
   const pick = (page: PageRef) => {
     const local = page.peers.find(peer => peer.chainId === chain?.id)
@@ -749,7 +771,7 @@ export function Compose() {
                 <SignedInAs />
               </>
             ) : (
-              <SignIn />
+              <SignIn onOpen={stepAside} />
             )}
             {error ? <p className="text-[13px] text-rose">{error}</p> : null}
           </div>
@@ -759,6 +781,7 @@ export function Compose() {
       <Sheet open={sheet === 'create'} onClose={() => setSheet('none')} title="Create a page">
         <CreatePage
           owner={address}
+          onSignIn={stepAside}
           onCreated={created => {
             setPage(created)
             setPosted(null)

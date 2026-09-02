@@ -15,7 +15,7 @@ const primary = 'w-full bg-pine px-4 py-3 text-[15px] font-medium text-farina di
  * The way in: Para's sheet (email, phone, socials, wallets) when a Para key is configured,
  * the browser's injected wallet otherwise, so local builds without keys still work.
  */
-export function SignIn({ label = 'Sign in' }: { label?: string }) {
+export function SignIn({ label = 'Sign in', onOpen }: { label?: string; /** Fired as the Para sheet is requested, so a host sheet can step aside. */ onOpen?: () => void }) {
   const { enabled, requestSignIn } = useParaAuth()
   const { connectors, connect, isPending, error } = useConnect()
   if (enabled) {
@@ -27,7 +27,10 @@ export function SignIn({ label = 'Sign in' }: { label?: string }) {
           onMouseEnter={preloadParaHost}
           onFocus={preloadParaHost}
           onTouchStart={preloadParaHost}
-          onClick={requestSignIn}
+          onClick={() => {
+            onOpen?.()
+            requestSignIn()
+          }}
         >
           {label}
         </button>
