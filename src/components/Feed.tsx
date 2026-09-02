@@ -148,8 +148,8 @@ export function Feed({ initial, initialPinned = null }: { initial: FeedPage; ini
         </div>
       </header>
 
-      {/* Left edge on the stem (3.5rem gutter), so the chip lines up with the timeline below it. */}
-      <div className="flex items-center justify-between gap-3 pb-1 pl-14 pr-4 pt-1">
+      {/* Left edge on the row content (3.5rem gutter + 1rem), so the chip lines up with the logos below it. */}
+      <div className="flex items-center justify-between gap-3 pb-1 pl-[4.5rem] pr-4 pt-1">
         {pinned ? (
           <span className="flex min-w-0 items-center gap-2 border border-bloom py-1 pl-1 pr-1.5 font-mono text-[11px] text-stem">
             <span className="flex size-5 shrink-0 items-center justify-center overflow-hidden rounded-full bg-farina-deep font-display text-[10px] text-pine">
