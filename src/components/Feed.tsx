@@ -1,9 +1,9 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ActivityEvent, FeedPage } from '@/lib/bendystraw'
+import type { ActivityEvent, FeedPage, PinnedPage } from '@/lib/bendystraw'
 import { ACTIVITY_FILTERS, activityFilterOf, combinedActivityParts, groupSameTxEvents, type ActivityFilter } from '@/lib/activity'
-import { addressUrl, chainIcon, chainName, chainSlug, projectUrl, txUrl } from '@/lib/chains'
+import { addressUrl, chainIcon, chainName, chainSlug, pagePath, projectUrl, txUrl } from '@/lib/chains'
 import { formatDate, formatTokenAmount, formatUsd18, projectLogoUrl, timeAgo, truncateAddress } from '@/lib/format'
 import { Compose } from './Compose'
 
@@ -21,7 +21,7 @@ function merge(current: ActivityEvent[], incoming: ActivityEvent[], prepend: boo
   return prepend ? [...incoming, ...rest] : [...rest, ...incoming]
 }
 
-export function Feed({ initial }: { initial: FeedPage }) {
+export function Feed({ initial, initialPinned = null }: { initial: FeedPage; initialPinned?: PinnedPage | null }) {
   const [events, setEvents] = useState(initial.events)
   const [hasMore, setHasMore] = useState(initial.hasMore)
   const [loading, setLoading] = useState(false)
@@ -31,13 +31,18 @@ export function Feed({ initial }: { initial: FeedPage }) {
   const [fresh, setFresh] = useState<Set<string>>(new Set())
   const markerRef = useRef<HTMLLIElement>(null)
   /** A page the feed is pinned to (tap a logo or name), fetched by its sucker group so paging still works. */
-  const [pinned, setPinned] = useState<{ group: string; name: string; logoUri: string | null } | null>(null)
+  const [pinned, setPinnedState] = useState<PinnedPage | null>(initialPinned)
+  // The address bar follows the pin so a filtered feed can be linked: /<handle>, /<chain>:<id>, or /.
+  const setPinned = (next: PinnedPage | null) => {
+    setPinnedState(next)
+    window.history.replaceState(null, '', next ? pagePath(next) : '/')
+  }
   const [category, setCategory] = useState<ActivityFilter | null>(null)
   const group = pinned?.group ?? null
 
   // Pinning or unpinning a page restarts the list from the top for that scope.
   useEffect(() => {
-    if (pinned === null && events === initial.events) return
+    if (pinned === initialPinned && events === initial.events) return
     let live = true
     setLoading(true)
     fetchPage(0, group)
@@ -232,7 +237,7 @@ function Row({
   group: ActivityEvent[]
   now: number
   fresh: boolean
-  onPin: (pinned: { group: string; name: string; logoUri: string | null } | null) => void
+  onPin: (pinned: PinnedPage | null) => void
 }) {
   const event = group[0]
   const name = event.project?.name?.trim() || `Project ${event.projectId}`
@@ -243,7 +248,17 @@ function Row({
   const txHref = txUrl(event.chainId, event.txHash)
   const project = projectUrl(event.chainId, event.projectId)
   // Tapping the page pins the feed to it; pages without a sucker group fall back to their juicebox.money link.
-  const pin = event.suckerGroupId ? () => onPin({ group: event.suckerGroupId!, name, logoUri: event.project?.logoUri ?? null }) : null
+  const pin = event.suckerGroupId
+    ? () =>
+        onPin({
+          group: event.suckerGroupId!,
+          name,
+          logoUri: event.project?.logoUri ?? null,
+          handle: event.project?.handle ?? null,
+          chainId: event.chainId,
+          projectId: event.projectId,
+        })
+    : null
 
   return (
     <li className={`grid grid-cols-[3.5rem_1fr] ${fresh ? 'animate-bloom' : ''}`}>

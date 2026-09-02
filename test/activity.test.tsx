@@ -12,6 +12,7 @@ const base = {
   suckerGroupId: null,
   project: {
     name: 'Markee',
+    handle: null,
     logoUri: null,
     tokenSymbol: 'ETH',
     decimals: 18,

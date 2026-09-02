@@ -14,6 +14,7 @@ export type ActivityEvent = {
   suckerGroupId: string | null
   project: {
     name: string | null
+    handle: string | null
     logoUri: string | null
     tokenSymbol: string | null
     decimals: number | null
@@ -61,7 +62,7 @@ const query = (withGroup: boolean) => `query($limit: Int!, $offset: Int!${withGr
   ) {
     items {
       id chainId projectId timestamp from txHash suckerGroupId
-      project { name logoUri tokenSymbol decimals deployErc20Events(limit: 1) { items { symbol } } }
+      project { name handle logoUri tokenSymbol decimals deployErc20Events(limit: 1) { items { symbol } } }
       payEvent { amount amountUsd beneficiary memo newlyIssuedTokenCount }
       cashOutTokensEvent { cashOutCount reclaimAmount reclaimAmountUsd beneficiary }
       projectCreateEvent { from }
@@ -164,4 +165,29 @@ export async function searchPages(query: string, owner: string | null): Promise<
     found: collapsePeers((json.data?.found?.items ?? []).map(withPeers)),
     mine: collapsePeers((json.data?.mine?.items ?? []).map(withPeers)),
   }
+}
+
+export type PinnedPage = { group: string; name: string; logoUri: string | null; handle: string | null; chainId: number; projectId: number }
+
+/** A page by juicebox.money's `<chain>:<projectId>` reference or by handle, for the linkable pinned feed. */
+export async function findPinnedPage(ref: { chainId: number; projectId: number } | { handle: string }): Promise<PinnedPage | null> {
+  const where = 'handle' in ref ? 'handle: $handle, version: 6' : 'chainId: $chainId, projectId: $projectId, version: 6'
+  const vars = 'handle' in ref ? '$handle: String!' : '$chainId: Int!, $projectId: Int!'
+  const response = await fetch(ENDPOINT, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      query: `query(${vars}) { projects(where: { ${where} }, limit: 1) { items { chainId projectId name handle logoUri suckerGroupId } } }`,
+      variables: ref,
+    }),
+    signal: AbortSignal.timeout(9_000),
+    next: { revalidate: 60 },
+  })
+  if (!response.ok) return null
+  const json = (await response.json()) as {
+    data?: { projects?: { items: { chainId: number; projectId: number; name: string | null; handle: string | null; logoUri: string | null; suckerGroupId: string | null }[] } }
+  }
+  const page = json.data?.projects?.items[0]
+  if (!page?.suckerGroupId) return null
+  return { group: page.suckerGroupId, name: page.name?.trim() || `Page ${page.projectId}`, logoUri: page.logoUri, handle: page.handle, chainId: page.chainId, projectId: page.projectId }
 }

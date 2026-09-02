@@ -37,3 +37,21 @@ export function addressUrl(chainId: number, address: string): string | null {
 export function projectUrl(chainId: number, projectId: number): string {
   return `https://juicebox.money/${CHAINS[chainId]?.slug ?? chainId}:${projectId}`
 }
+
+/** The address-bar form of a page: its handle when it has one, else juicebox.money's `<chain>:<projectId>`. */
+export function pagePath(page: { handle: string | null; chainId: number; projectId: number }): string {
+  return `/${page.handle ? encodeURIComponent(page.handle) : `${chainSlug(page.chainId)}:${page.projectId}`}`
+}
+
+/** Parse `<chain>:<projectId>` (eth:1, base:6); anything else is a handle. */
+export function parsePageRef(segment: string): { chainId: number; projectId: number } | { handle: string } | null {
+  const raw = decodeURIComponent(segment).trim()
+  const [slug, id] = raw.split(':')
+  if (id !== undefined) {
+    const chainId = Object.entries(CHAINS).find(([, chain]) => chain.slug === slug)?.[0]
+    const projectId = Number(id)
+    if (!chainId || !Number.isInteger(projectId) || projectId <= 0) return null
+    return { chainId: Number(chainId), projectId }
+  }
+  return /^[a-z0-9][a-z0-9._-]{0,63}$/i.test(raw) ? { handle: raw } : null
+}

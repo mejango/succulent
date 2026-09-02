@@ -681,9 +681,8 @@ export function Compose() {
       <Sheet open={sheet === 'post'} onClose={close} title={posted ? 'Posted' : page ? `Post to ${page.name?.trim() || `Page ${page.projectId}`}` : 'Post'}>
         {posted ? (
           <div className="space-y-3">
-            <p className="text-[13px] text-stem">It will show in the feed once indexed, usually within a minute.</p>
             {txUrl(posted.chainId, posted.hash) ? (
-              <a href={txUrl(posted.chainId, posted.hash)!} target="_blank" rel="noopener noreferrer" className="font-mono text-[12px] text-pine underline decoration-bloom underline-offset-2">
+              <a href={txUrl(posted.chainId, posted.hash)!} target="_blank" rel="noopener noreferrer" className="block text-center font-mono text-[12px] text-pine underline decoration-bloom underline-offset-2">
                 view transaction
               </a>
             ) : null}
