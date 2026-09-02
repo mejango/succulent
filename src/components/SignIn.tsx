@@ -55,6 +55,7 @@ export function SignedInAs() {
   const { disconnectAsync } = useDisconnect()
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [open, setOpen] = useState(false)
   if (!address) return null
 
   const signOut = async () => {
@@ -83,10 +84,15 @@ export function SignedInAs() {
 
   return (
     <p className="flex items-center gap-3 font-mono text-[11px] text-stem">
-      <span title={address}>{truncateAddress(address)}</span>
-      <button type="button" onClick={signOut} disabled={pending} className="underline-offset-2 hover:underline disabled:opacity-50">
-        {pending ? 'signing out' : 'sign out'}
+      {/* The account is a toggle; sign out shows only once it is tapped. */}
+      <button type="button" onClick={() => setOpen(current => !current)} title={address} aria-expanded={open} className="underline-offset-2 hover:underline">
+        {truncateAddress(address)}
       </button>
+      {open ? (
+        <button type="button" onClick={signOut} disabled={pending} className="text-pine underline-offset-2 hover:underline disabled:opacity-50">
+          {pending ? 'signing out' : 'sign out'}
+        </button>
+      ) : null}
       {error ? <span className="text-rose">{error}</span> : null}
     </p>
   )
