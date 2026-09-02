@@ -150,7 +150,7 @@ export function Feed({ initial, initialPinned = null }: { initial: FeedPage; ini
 
       <div className="flex items-center justify-between gap-3 px-4 pb-1 pt-1">
         {pinned ? (
-          <span className="flex min-w-0 items-center gap-2 font-mono text-[11px] text-stem">
+          <span className="flex min-w-0 items-center gap-2 border border-bloom py-1 pl-1 pr-1.5 font-mono text-[11px] text-stem">
             <span className="flex size-5 shrink-0 items-center justify-center overflow-hidden rounded-full bg-farina-deep font-display text-[10px] text-pine">
               {projectLogoUrl(pinned.logoUri) ? (
                 // eslint-disable-next-line @next/next/no-img-element -- untrusted remote logo
