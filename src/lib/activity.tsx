@@ -12,6 +12,51 @@ type Category =
   | 'projectCreate' | 'pay' | 'addToBalance' | 'nftMint' | 'cashOut' | 'buybackSwap'
   | 'tokenMint' | 'autoIssue' | 'bridgeClaim'
 
+/** Every kind of row the feed shows, with the label the filter menu uses. Order is the menu order. */
+export const ACTIVITY_FILTERS = [
+  ['pay', 'Payments'],
+  ['cashOut', 'Cash outs'],
+  ['buybackSwap', 'Buyback swaps'],
+  ['tokenMint', 'Mints'],
+  ['payout', 'Payouts'],
+  ['reserved', 'Reserved tokens'],
+  ['autoIssue', 'Auto issuance'],
+  ['nftMint', 'Shop purchases'],
+  ['shopItem', 'Shop items'],
+  ['loan', 'Loans'],
+  ['bridgeClaim', 'Bridge claims'],
+  ['projectCreate', 'New pages'],
+  ['reconfigure', 'Rule changes'],
+  ['tokenDeploy', 'Token deploys'],
+  ['infoUpdate', 'Info updates'],
+  ['ownershipTransfer', 'Ownership'],
+  ['addToBalance', 'Deposits'],
+  ['buybackPool', 'Buyback pools'],
+] as const
+export type ActivityFilter = (typeof ACTIVITY_FILTERS)[number][0]
+
+export function activityFilterOf(event: ActivityEvent): ActivityFilter | null {
+  if (event.payEvent) return 'pay'
+  if (event.cashOutTokensEvent) return 'cashOut'
+  if (event.swapEvent) return 'buybackSwap'
+  if (event.mintTokensEvent) return 'tokenMint'
+  if (event.sendPayoutsEvent) return 'payout'
+  if (event.sendReservedTokensToSplitsEvent) return 'reserved'
+  if (event.autoIssueEvent) return 'autoIssue'
+  if (event.mintNftEvent) return 'nftMint'
+  if (event.addNftTierEvent || event.removeNftTierEvent) return 'shopItem'
+  if (event.borrowLoanEvent || event.repayLoanEvent || event.liquidateLoanEvent) return 'loan'
+  if (event.bridgeClaimEvent) return 'bridgeClaim'
+  if (event.projectCreateEvent) return 'projectCreate'
+  if (event.rulesetQueuedEvent) return 'reconfigure'
+  if (event.deployErc20Event) return 'tokenDeploy'
+  if (event.setUriEvent) return 'infoUpdate'
+  if (event.projectTransferEvent) return 'ownershipTransfer'
+  if (event.addToBalanceEvent) return 'addToBalance'
+  if (event.buybackPoolEvent) return 'buybackPool'
+  return null
+}
+
 /** Reading order inside a group; the first present event also anchors the row. */
 const GROUP_ORDER: Category[] = [
   'projectCreate', 'pay', 'addToBalance', 'nftMint', 'cashOut', 'buybackSwap',

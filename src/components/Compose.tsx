@@ -17,9 +17,6 @@ import { X } from '@/components/ui/icons'
 import { SignIn, SignedInAs } from './SignIn'
 import { useParaAuth } from '@/providers/ParaAuthContext'
 
-/** Focus the first field on open only where a keyboard is already there; on touch devices it would zoom and cover the sheet. */
-const AUTO_FOCUS = typeof window !== 'undefined' && !window.matchMedia('(pointer: coarse)').matches
-
 const field =
   'w-full border border-bloom bg-white/60 px-3 py-2.5 text-base text-pine placeholder:text-stem-light focus:border-moss focus:outline-none'
 const primary =
@@ -130,7 +127,7 @@ function PagePicker({
         placeholder={onAddress ? 'Page name, ENS, or 0x address' : 'Find a page'}
         value={query}
         onChange={event => setQuery(event.target.value)}
-        autoFocus={AUTO_FOCUS}
+       
       />
       {onAddress && ensName ? (
         ens === 'pending' || ens === null ? (
@@ -508,7 +505,7 @@ function CreatePage({ owner, onCreated, onSignIn }: { owner: `0x${string}` | und
           )}
           <input type="file" accept="image/*" className="sr-only" onChange={event => setLogo(event.target.files?.[0] ?? null)} />
         </label>
-        <input className={`${field} font-display text-xl`} placeholder="Page name" value={name} maxLength={80} onChange={event => setName(event.target.value)} autoFocus={AUTO_FOCUS} />
+        <input className={`${field} font-display text-xl`} placeholder="Page name" value={name} maxLength={80} onChange={event => setName(event.target.value)} />
       </div>
       <fieldset>
         <legend className="mb-1.5 font-mono text-[11px] text-stem">Receive paid posts on</legend>
@@ -727,7 +724,7 @@ export function Compose() {
               <span className="text-pine">{chainName(page.chainId)}</span>
             )}
             </p>
-            <textarea className={`${field} block min-h-28 resize-none`} placeholder="Let ’em know" value={memo} maxLength={280} onChange={event => setMemo(event.target.value)} autoFocus={AUTO_FOCUS} />
+            <textarea className={`${field} block min-h-28 resize-none`} placeholder="Let ’em know" value={memo} maxLength={280} onChange={event => setMemo(event.target.value)} />
             <label className="-mt-1 block">
               <span className="font-mono text-[11px] text-stem">Optionally, add a payment</span>
               <span className="mt-1 flex items-stretch border border-bloom bg-white/60 focus-within:border-moss">

@@ -9,6 +9,7 @@ const base = {
   timestamp: 1_700_000_000,
   from: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
   txHash: '0xtx',
+  suckerGroupId: null,
   project: {
     name: 'Markee',
     logoUri: null,

@@ -16,6 +16,11 @@ export function Sheet({ open, onClose, title, children }: { open: boolean; onClo
       // showModal() focuses the first focusable descendant, the × button, and paints its focus ring.
       // Start on the panel instead: nothing lights up, and screen readers land on the sheet's heading.
       panel.current?.focus({ preventScroll: true })
+      // With a keyboard already present, go straight into the first field. On touch devices that would
+      // raise the keyboard over the sheet, so the visitor taps when ready.
+      if (window.matchMedia('(pointer: fine)').matches) {
+        panel.current?.querySelector<HTMLElement>('input, textarea')?.focus({ preventScroll: true })
+      }
     }
     if (!open && dialog.open) dialog.close()
   }, [open])

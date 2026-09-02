@@ -2,15 +2,15 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ActivityEvent, FeedPage } from '@/lib/bendystraw'
-import { combinedActivityParts, groupSameTxEvents } from '@/lib/activity'
+import { ACTIVITY_FILTERS, activityFilterOf, combinedActivityParts, groupSameTxEvents, type ActivityFilter } from '@/lib/activity'
 import { addressUrl, chainIcon, chainName, chainSlug, projectUrl, txUrl } from '@/lib/chains'
 import { formatDate, formatTokenAmount, formatUsd18, projectLogoUrl, timeAgo, truncateAddress } from '@/lib/format'
 import { Compose } from './Compose'
 
 const POLL_MS = 15_000
 
-async function fetchPage(offset: number): Promise<FeedPage> {
-  const response = await fetch(`/api/activity?offset=${offset}`)
+async function fetchPage(offset: number, group: string | null): Promise<FeedPage> {
+  const response = await fetch(`/api/activity?offset=${offset}${group ? `&group=${group}` : ''}`)
   if (!response.ok) throw new Error('Activity unavailable')
   return response.json()
 }
@@ -30,12 +30,37 @@ export function Feed({ initial }: { initial: FeedPage }) {
   const [now, setNow] = useState(initial.fetchedAt)
   const [fresh, setFresh] = useState<Set<string>>(new Set())
   const markerRef = useRef<HTMLLIElement>(null)
+  /** A page the feed is pinned to (tap a logo or name), fetched by its sucker group so paging still works. */
+  const [pinned, setPinned] = useState<{ group: string; name: string; logoUri: string | null } | null>(null)
+  const [category, setCategory] = useState<ActivityFilter | null>(null)
+  const group = pinned?.group ?? null
+
+  // Pinning or unpinning a page restarts the list from the top for that scope.
+  useEffect(() => {
+    if (pinned === null && events === initial.events) return
+    let live = true
+    setLoading(true)
+    fetchPage(0, group)
+      .then(page => {
+        if (!live) return
+        setEvents(page.events)
+        setHasMore(page.hasMore)
+        setNow(page.fetchedAt)
+        setFresh(new Set())
+      })
+      .catch(() => live && setStale(true))
+      .finally(() => live && setLoading(false))
+    return () => {
+      live = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs when the pinned group changes only
+  }, [group])
 
   useEffect(() => {
     const tick = async () => {
       if (document.visibilityState === 'hidden') return
       try {
-        const page = await fetchPage(0)
+        const page = await fetchPage(0, group)
         setEvents(current => {
           const known = new Set(current.map(event => event.id))
           const arrived = page.events.filter(event => !known.has(event.id)).map(event => event.id)
@@ -54,13 +79,13 @@ export function Feed({ initial }: { initial: FeedPage }) {
       clearInterval(timer)
       document.removeEventListener('visibilitychange', tick)
     }
-  }, [])
+  }, [group])
 
   const loadMore = useCallback(async () => {
     if (loading || !hasMore) return
     setLoading(true)
     try {
-      const page = await fetchPage(events.length)
+      const page = await fetchPage(events.length, group)
       setEvents(current => merge(current, page.events, false))
       setHasMore(page.hasMore)
     } catch {
@@ -68,7 +93,7 @@ export function Feed({ initial }: { initial: FeedPage }) {
     } finally {
       setLoading(false)
     }
-  }, [events.length, hasMore, loading])
+  }, [events.length, hasMore, loading, group])
 
   useEffect(() => {
     const marker = markerRef.current
@@ -81,7 +106,9 @@ export function Feed({ initial }: { initial: FeedPage }) {
     return () => observer.disconnect()
   }, [hasMore, loadMore, loading])
 
-  const groups = groupSameTxEvents(events)
+  const groups = groupSameTxEvents(events).filter(
+    entry => category === null || entry.some(event => activityFilterOf(event) === category),
+  )
 
   return (
     <>
@@ -106,6 +133,46 @@ export function Feed({ initial }: { initial: FeedPage }) {
         </div>
       </header>
 
+      <div className="flex items-center justify-between gap-3 px-4 pb-1 pt-1">
+        {pinned ? (
+          <span className="flex min-w-0 items-center gap-2 font-mono text-[11px] text-stem">
+            <span className="flex size-5 shrink-0 items-center justify-center overflow-hidden rounded-full bg-farina-deep font-display text-[10px] text-pine">
+              {projectLogoUrl(pinned.logoUri) ? (
+                // eslint-disable-next-line @next/next/no-img-element -- untrusted remote logo
+                <img src={projectLogoUrl(pinned.logoUri)!} alt="" className="size-full object-cover" />
+              ) : (
+                pinned.name[0]?.toUpperCase()
+              )}
+            </span>
+            <span className="truncate text-pine">{pinned.name}</span>
+            <button type="button" onClick={() => setPinned(null)} aria-label="Show every page" className="px-1 text-stem hover:text-rose">
+              ×
+            </button>
+          </span>
+        ) : (
+          <span />
+        )}
+        {/* The same category filter juicebox.money's project page has, top right of the list. */}
+        <span className="relative inline-block shrink-0">
+          <span aria-hidden className="select-caret block whitespace-pre pl-[2px] pr-4 font-mono text-[11px] text-stem [background-position:right_2px_center]">
+            {category ? ACTIVITY_FILTERS.find(([key]) => key === category)?.[1] : 'All activity'}
+          </span>
+          <select
+            aria-label="Filter activity"
+            value={category ?? ''}
+            onChange={event => setCategory((event.target.value || null) as ActivityFilter | null)}
+            className="absolute inset-0 m-0 h-full w-full cursor-pointer appearance-none border-0 bg-transparent p-0 font-mono text-[11px] text-transparent focus:outline-none [&>option]:text-pine"
+          >
+            <option value="">All activity</option>
+            {ACTIVITY_FILTERS.map(([key, label]) => (
+              <option key={key} value={key}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </span>
+      </div>
+
       {stale ? (
         <p className="mx-4 mb-2 border border-rose/40 px-3 py-2 font-mono text-[11px] text-rose">
           Connection paused. Retrying every 15 seconds.
@@ -114,12 +181,16 @@ export function Feed({ initial }: { initial: FeedPage }) {
 
       {groups.length === 0 ? (
         <p className="px-4 py-24 text-center text-sm text-stem">
-          Nothing has landed yet. New activity shows here within seconds.
+          {loading
+            ? 'Loading'
+            : category || pinned
+              ? 'Nothing here yet for this filter.'
+              : 'Nothing has landed yet. New activity shows here within seconds.'}
         </p>
       ) : (
         <ol className="pb-16 pt-2">
           {groups.map(group => (
-            <Row key={group[0].id} group={group} now={now} fresh={fresh.has(group[0].id)} />
+            <Row key={group[0].id} group={group} now={now} fresh={fresh.has(group[0].id)} onPin={setPinned} />
           ))}
           {hasMore || loading ? (
             <li ref={markerRef} aria-live="polite" className="grid grid-cols-[3.5rem_1fr]">
@@ -152,7 +223,17 @@ function signedAmount(
   return null
 }
 
-function Row({ group, now, fresh }: { group: ActivityEvent[]; now: number; fresh: boolean }) {
+function Row({
+  group,
+  now,
+  fresh,
+  onPin,
+}: {
+  group: ActivityEvent[]
+  now: number
+  fresh: boolean
+  onPin: (pinned: { group: string; name: string; logoUri: string | null } | null) => void
+}) {
   const event = group[0]
   const name = event.project?.name?.trim() || `Project ${event.projectId}`
   const { actor, action, direction, memo, amountUsd, amountRaw } = combinedActivityParts(group)
@@ -161,6 +242,8 @@ function Row({ group, now, fresh }: { group: ActivityEvent[]; now: number; fresh
   const actorHref = addressUrl(event.chainId, actor)
   const txHref = txUrl(event.chainId, event.txHash)
   const project = projectUrl(event.chainId, event.projectId)
+  // Tapping the page pins the feed to it; pages without a sucker group fall back to their juicebox.money link.
+  const pin = event.suckerGroupId ? () => onPin({ group: event.suckerGroupId!, name, logoUri: event.project?.logoUri ?? null }) : null
 
   return (
     <li className={`grid grid-cols-[3.5rem_1fr] ${fresh ? 'animate-bloom' : ''}`}>
@@ -175,12 +258,25 @@ function Row({ group, now, fresh }: { group: ActivityEvent[]; now: number; fresh
         {/* The leaf node on the stem. */}
         <span aria-hidden className="absolute -left-[3.5px] top-[1.15rem] size-1.5 rounded-full bg-pine" />
         <div className="flex items-center gap-2.5">
-          <a href={project} aria-label={`Open ${name} on juicebox.money`} className="shrink-0">
-            <Logo name={name} logoUri={event.project?.logoUri ?? null} />
-          </a>
-          <a href={project} className="min-w-0 flex-1 truncate text-[15px] font-medium leading-tight text-pine">
-            {name}
-          </a>
+          {pin ? (
+            <>
+              <button type="button" onClick={pin} aria-label={`Only ${name}`} className="shrink-0">
+                <Logo name={name} logoUri={event.project?.logoUri ?? null} />
+              </button>
+              <button type="button" onClick={pin} className="min-w-0 flex-1 truncate text-left text-[15px] font-medium leading-tight text-pine">
+                {name}
+              </button>
+            </>
+          ) : (
+            <>
+              <a href={project} aria-label={`Open ${name} on juicebox.money`} className="shrink-0">
+                <Logo name={name} logoUri={event.project?.logoUri ?? null} />
+              </a>
+              <a href={project} className="min-w-0 flex-1 truncate text-[15px] font-medium leading-tight text-pine">
+                {name}
+              </a>
+            </>
+          )}
           <a
             href={txHref ?? undefined}
             target="_blank"

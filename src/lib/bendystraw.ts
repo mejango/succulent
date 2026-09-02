@@ -10,6 +10,8 @@ export type ActivityEvent = {
   timestamp: number
   from: string
   txHash: string
+  /** The page's cross-chain identity; the same on every chain it lives on. */
+  suckerGroupId: string | null
   project: {
     name: string | null
     logoUri: string | null
@@ -48,16 +50,17 @@ const EVENT_KINDS = [
   'swapEvent', 'buybackPoolEvent', 'bridgeClaimEvent',
 ] as const
 
-const QUERY = `query($limit: Int!, $offset: Int!) {
+/** `suckerGroupId: null` in a where clause matches nothing, so the filter is only written when there is a group. */
+const query = (withGroup: boolean) => `query($limit: Int!, $offset: Int!${withGroup ? ', $group: String!' : ''}) {
   activityEvents(
-    where: { version: 6, OR: [${EVENT_KINDS.map(kind => `{ ${kind}_not: null }`).join(' ')}] }
+    where: { version: 6, ${withGroup ? 'suckerGroupId: $group, ' : ''}OR: [${EVENT_KINDS.map(kind => `{ ${kind}_not: null }`).join(' ')}] }
     orderBy: "timestamp"
     orderDirection: "desc"
     limit: $limit
     offset: $offset
   ) {
     items {
-      id chainId projectId timestamp from txHash
+      id chainId projectId timestamp from txHash suckerGroupId
       project { name logoUri tokenSymbol decimals deployErc20Events(limit: 1) { items { symbol } } }
       payEvent { amount amountUsd beneficiary memo newlyIssuedTokenCount }
       cashOutTokensEvent { cashOutCount reclaimAmount reclaimAmountUsd beneficiary }
@@ -85,11 +88,11 @@ const QUERY = `query($limit: Int!, $offset: Int!) {
 }`
 
 /** Newest V6 events across every project. Server-side only. */
-export async function getRecentActivity(limit: number, offset: number): Promise<ActivityEvent[]> {
+export async function getRecentActivity(limit: number, offset: number, group: string | null = null): Promise<ActivityEvent[]> {
   const response = await fetch(ENDPOINT, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ query: QUERY, variables: { limit, offset } }),
+    body: JSON.stringify({ query: query(group !== null), variables: group ? { limit, offset, group } : { limit, offset } }),
     signal: AbortSignal.timeout(9_000),
     next: { revalidate: 10 },
   })
@@ -105,8 +108,8 @@ export async function getRecentActivity(limit: number, offset: number): Promise<
 export type FeedPage = { events: ActivityEvent[]; hasMore: boolean; fetchedAt: number }
 
 /** One feed page plus the clock it was read at, so server and client agree on "how long ago". */
-export async function getFeedPage(offset: number): Promise<FeedPage> {
-  const page = await getRecentActivity(PAGE_SIZE + 1, offset)
+export async function getFeedPage(offset: number, group: string | null = null): Promise<FeedPage> {
+  const page = await getRecentActivity(PAGE_SIZE + 1, offset, group)
   return { events: page.slice(0, PAGE_SIZE), hasMore: page.length > PAGE_SIZE, fetchedAt: Date.now() }
 }
 
