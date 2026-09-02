@@ -4,6 +4,7 @@ import { createConfig, fallback, http } from 'wagmi'
 import { arbitrum, base, mainnet, optimism } from 'wagmi/chains'
 import { injected } from 'wagmi/connectors/injected'
 import { IS_DETERMINISTIC_BROWSER, PARA_EMBEDDED_WALLET_ENABLED } from './browserEnvironment'
+import { jbCenterRpcTransport } from './jbcenter-rpc'
 import { lazyParaConnector } from '@/providers/lazy-para-connector'
 import { externalWalletConnectors } from '@/providers/wallet-connectors'
 
@@ -18,8 +19,9 @@ const RPC: Record<number, string | undefined> = {
   42161: process.env.NEXT_PUBLIC_RPC_42161,
 }
 
-// The chains' default public RPCs rate-limit quickly (mainnet.base.org answered "over rate limit" in
-// testing), so each chain tries the configured RPC, then publicnode, then the default.
+// juicebox.center's RPC first (the transport juicebox.money uses; it allowlists succulent.money once
+// jbcenter PR #17 is deployed and 403s until then), then a configured RPC, then publicnode, then the
+// chain default. viem's fallback skips a transport that errors. mainnet.base.org rate-limits eth_call.
 const PUBLICNODE: Record<number, string> = {
   1: 'https://ethereum-rpc.publicnode.com',
   10: 'https://optimism-rpc.publicnode.com',
@@ -27,7 +29,7 @@ const PUBLICNODE: Record<number, string> = {
   42161: 'https://arbitrum-one-rpc.publicnode.com',
 }
 const transport = (chainId: number) =>
-  fallback([...(RPC[chainId] ? [http(RPC[chainId])] : []), http(PUBLICNODE[chainId]), http()])
+  fallback([jbCenterRpcTransport(chainId), ...(RPC[chainId] ? [http(RPC[chainId])] : []), http(PUBLICNODE[chainId]), http()])
 
 export const transports = {
   [mainnet.id]: transport(1),
