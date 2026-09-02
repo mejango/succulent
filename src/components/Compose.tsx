@@ -11,7 +11,9 @@ import type { ActivityEvent, PageRef } from '@/lib/bendystraw'
 import { CHAINS, type PageChainId } from '@/lib/wagmi'
 import { chainIcon, chainName, chainSlug, txUrl } from '@/lib/chains'
 import { projectLogoUrl } from '@/lib/format'
-import { createPage, destinationExistsOn, destinationLabel, destinationOn, failureReason, postToPage, recipientsProblem, type Destination, type LaunchedPage, type PageRecipient } from '@/lib/tx'
+import { createPage, destinationExistsOn, destinationLabel, destinationOn, failureReason, launchQuotedPage, postToPage, quoteMultichainPage, recipientsProblem, type Destination, type LaunchedPage, type PageRecipient, type QuotedLaunch } from '@/lib/tx'
+import type { ChainPayment } from '@/lib/relayr'
+import { formatEther } from 'viem'
 import { Sheet } from './Sheet'
 import { X } from '@/components/ui/icons'
 import { SignIn, SignedInAs } from './SignIn'
@@ -457,6 +459,10 @@ function CreatePage({ owner, onCreated, onSignIn }: { owner: `0x${string}` | und
   const [step, setStep] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [launched, setLaunched] = useState<LaunchedPage[]>([])
+  /** Multi-network launches: signed and quoted by Relayr, waiting for the one payment. */
+  const [quoted, setQuoted] = useState<QuotedLaunch | null>(null)
+  const [payment, setPayment] = useState<ChainPayment | null>(null)
+  const [progress, setProgress] = useState<{ chainId: number; state: string; hash?: `0x${string}` }[]>([])
   const toggleChain = (id: PageChainId) =>
     setChainIds(current => (current.includes(id) ? current.filter(entry => entry !== id) : [...current, id]))
   const preview = logo ? URL.createObjectURL(logo) : null
@@ -467,18 +473,33 @@ function CreatePage({ owner, onCreated, onSignIn }: { owner: `0x${string}` | und
     if (!owner) return
     setError(null)
     setLaunched([])
+    setProgress([])
     try {
-      // Launch on the wallet's current chain first so the first confirmation needs no switch.
+      if (chainIds.length === 1) {
+        // One network: a single JBController launch straight from the wallet.
+        const page = await createPage({ chainId: chainIds[0], name: name.trim(), logo, owner, recipients, onStep: setStep })
+        onCreated({ chainId: page.chainId, projectId: page.projectId, name: name.trim(), logoUri: null, suckerGroupId: null, peers: [{ chainId: page.chainId, projectId: page.projectId }] })
+        return
+      }
+      // Several networks: sign once per network, then Relayr quotes; the payment is a separate step.
+      // The wallet's chain goes first so the first signature needs no switch.
       const ordered = [...chainIds].sort((a, b) => Number(b === chain?.id) - Number(a === chain?.id))
-      const pages = await createPage({
-        chainIds: ordered,
-        name: name.trim(),
-        logo,
-        owner,
-        recipients,
-        onStep: setStep,
-        onLaunched: page => setLaunched(current => [...current, page]),
-      })
+      const next = await quoteMultichainPage({ chainIds: ordered, name: name.trim(), logo, owner, recipients, onStep: setStep })
+      setQuoted(next)
+      setPayment(next.quote.payment_info.find(entry => entry.chain === chain?.id) ?? next.quote.payment_info[0])
+    } catch (caught) {
+      setError(failureReason(caught))
+    } finally {
+      setStep(null)
+    }
+  }
+
+  const pay = async () => {
+    if (!owner || !quoted || !payment) return
+    setError(null)
+    try {
+      const pages = await launchQuotedPage({ quoted, payment, owner, onStep: setStep, onProgress: setProgress })
+      setLaunched(pages)
       onCreated({
         chainId: pages[0].chainId,
         projectId: pages[0].projectId,
@@ -488,11 +509,17 @@ function CreatePage({ owner, onCreated, onSignIn }: { owner: `0x${string}` | und
         suckerGroupId: null,
         peers: pages.map(page => ({ chainId: page.chainId, projectId: page.projectId })),
       })
+      setQuoted(null)
     } catch (caught) {
       setError(failureReason(caught))
     } finally {
       setStep(null)
     }
+  }
+
+  const formatPayment = (entry: ChainPayment) => {
+    const eth = Number(formatEther(BigInt(entry.amount)))
+    return `${eth < 0.0001 ? '<0.0001' : eth.toLocaleString('en-US', { maximumFractionDigits: 5 })} ETH`
   }
 
   return (
@@ -530,17 +557,69 @@ function CreatePage({ owner, onCreated, onSignIn }: { owner: `0x${string}` | und
       </fieldset>
       <Recipients recipients={recipients} chainIds={chainIds} owner={owner} disabled={step !== null} onChange={setRecipients} />
       {problem ? <p className="text-[13px] text-rose">{problem}</p> : null}
+      {progress.length ? (
+        <ul className="divide-y divide-bloom border border-bloom font-mono text-[11px]">
+          {progress.map(entry => (
+            <li key={entry.chainId} className="flex items-center justify-between gap-2 px-2.5 py-1.5">
+              <span className="flex items-center gap-1.5 text-stem">
+                {/* eslint-disable-next-line @next/next/no-img-element -- static local svg */}
+                <img src={chainIcon(entry.chainId)!} alt="" width={14} height={14} className="rounded-full" />
+                {chainName(entry.chainId)}
+              </span>
+              {entry.hash && txUrl(entry.chainId, entry.hash) ? (
+                <a href={txUrl(entry.chainId, entry.hash)!} target="_blank" rel="noopener noreferrer" className={`underline-offset-2 hover:underline ${/success|completed/i.test(entry.state) ? 'text-moss' : 'text-pine'}`}>
+                  {/success|completed/i.test(entry.state) ? 'live' : entry.state.toLowerCase()}
+                </a>
+              ) : (
+                <span className={/failed|reverted|dropped/i.test(entry.state) ? 'text-rose' : 'text-stem-light'}>{entry.state.toLowerCase()}</span>
+              )}
+            </li>
+          ))}
+        </ul>
+      ) : null}
       {launched.length ? (
         <p className="font-mono text-[11px] text-moss">
           live on {launched.map(page => chainName(page.chainId)).join(', ')}
         </p>
       ) : null}
-      {owner ? (
-        <button type="button" className={primary} disabled={!name.trim() || !chainIds.length || !!problem || step !== null} onClick={submit}>
-          {step ?? (chainIds.length > 1 ? `Create page on ${chainIds.length} networks` : 'Create page')}
-        </button>
-      ) : (
+      {!owner ? (
         <SignIn onOpen={onSignIn} />
+      ) : quoted && payment ? (
+        <div className="space-y-2">
+          <p className="flex flex-wrap items-baseline gap-1 font-mono text-[11px] text-stem">
+            Relayr will launch on {quoted.chainIds.length} networks. Pay
+            <span className="text-pine">{formatPayment(payment)}</span>
+            on
+            <span className="relative inline-block">
+              <span aria-hidden className="select-caret block whitespace-pre border-b border-dotted border-stem pl-[2px] pr-[18px] text-pine [background-position:right_2px_center]">
+                {chainName(payment.chain)}
+              </span>
+              <select
+                aria-label="Pay on"
+                value={payment.chain}
+                disabled={step !== null}
+                onChange={event => setPayment(quoted.quote.payment_info.find(entry => entry.chain === Number(event.target.value)) ?? payment)}
+                className="absolute inset-0 m-0 h-full w-full cursor-pointer appearance-none border-0 bg-transparent p-0 font-mono text-[11px] text-transparent focus:outline-none [&>option]:text-pine"
+              >
+                {quoted.quote.payment_info.map(entry => (
+                  <option key={entry.chain} value={entry.chain}>
+                    {chainName(entry.chain)} ({formatPayment(entry)})
+                  </option>
+                ))}
+              </select>
+            </span>
+          </p>
+          <button type="button" className={primary} disabled={step !== null} onClick={pay}>
+            {step ?? 'Pay and launch'}
+          </button>
+          <button type="button" disabled={step !== null} onClick={() => setQuoted(null)} className="font-mono text-[11px] text-stem underline-offset-2 hover:underline">
+            start over
+          </button>
+        </div>
+      ) : (
+        <button type="button" className={primary} disabled={!name.trim() || !chainIds.length || !!problem || step !== null} onClick={submit}>
+          {step ?? (chainIds.length > 1 ? `Sign for ${chainIds.length} networks` : 'Create page')}
+        </button>
       )}
       {error ? <p className="text-[13px] text-rose">{error}</p> : null}
     </div>

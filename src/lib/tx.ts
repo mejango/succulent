@@ -3,13 +3,15 @@
 import { NATIVE_TOKEN } from '@bananapus/nana-sdk-core'
 import type { PayOption } from './pay-options'
 import { createJBCenterClient } from '@bananapus/nana-sdk-core/jbcenter'
-import { buildPayTx, getProjectCreationFee, projectIdFromLaunchLogs, resolvePaymentTerminal } from '@bananapus/nana-sdk-core/v6'
+import { buildPayTx, getProjectCreationFee, resolvePaymentTerminal } from '@bananapus/nana-sdk-core/v6'
 import { getPublicClient, readContract, switchChain, waitForTransactionReceipt, writeContract } from 'wagmi/actions'
-import { erc20Abi, toHex, type Address, type Hex, type PublicClient } from 'viem'
+import { encodeFunctionData, erc20Abi, parseEventLogs, toHex, type Address, type Hex, type Log, type PublicClient } from 'viem'
+import { jbControllerAbi } from '@bananapus/nana-sdk-core'
 import { pageLaunchTx, pageOmnichainLaunchTx, type PageSplit } from './page-launch'
 import type { PageRef } from './bendystraw'
 import { chainName } from './chains'
 import { wagmiConfig, type PageChainId } from './wagmi'
+import { payQuote, requestQuote, signForwardRequests, waitForBundle, bundleHash, type ChainPayment, type RelayrQuote } from './relayr'
 
 const center = createJBCenterClient()
 
@@ -137,50 +139,125 @@ export function splitsOn(chainId: number, recipients: readonly PageRecipient[], 
 }
 
 /**
- * Pin the Page's logo and metadata once, then launch it on every selected chain, one wallet
- * confirmation per chain. `onLaunched` fires per chain so a failure midway still leaves the
- * caller holding the pages that did land.
+ * The project id from a launch receipt: JBController's LaunchProject event, whichever controller
+ * emitted it (the omnichain deployer's controller differs from the SDK's address table).
  */
+export function projectIdFromLogs(logs: Log[]): number | null {
+  const events = parseEventLogs({ abi: jbControllerAbi, eventName: 'LaunchProject', logs, strict: false })
+  const projectId = events[0]?.args.projectId
+  return projectId === undefined ? null : Number(projectId)
+}
+
+async function pinPage(args: { name: string; logo: File | null; onStep: (step: string) => void }): Promise<string> {
+  args.onStep('Saving logo')
+  const logoUri = args.logo ? (await center.pinImage(args.logo, { filename: args.logo.name })).uri : undefined
+  args.onStep('Saving page details')
+  return (await center.pinJson({ name: args.name, ...(logoUri ? { logoUri } : {}) })).uri
+}
+
+/** A page on ONE network: pin, then one JBController launch from the wallet. */
 export async function createPage(args: {
+  chainId: PageChainId
+  name: string
+  logo: File | null
+  owner: Address
+  recipients: readonly PageRecipient[]
+  onStep: (step: string) => void
+}): Promise<LaunchedPage> {
+  const problem = recipientsProblem(args.recipients)
+  if (problem) throw new Error(problem)
+  const { chainId } = args
+  const projectUri = await pinPage(args)
+  args.onStep('Confirm in your wallet')
+  const creationFee = await getProjectCreationFee(client(chainId), chainId)
+  const tx = pageLaunchTx({ chainId, owner: args.owner, projectUri, creationFee, splits: splitsOn(chainId, args.recipients, args.owner) })
+  await onChain(chainId)
+  const hash = await writeContract(wagmiConfig, { ...tx, chainId } as never)
+  args.onStep('Waiting for confirmation')
+  const receipt = await waitForTransactionReceipt(wagmiConfig, { hash, chainId })
+  const projectId = projectIdFromLogs(receipt.logs)
+  if (projectId === null) throw new Error(`The page launched on ${chainName(chainId)} but its id could not be read from the receipt.`)
+  return { chainId, projectId, hash }
+}
+
+export type QuotedLaunch = { quote: RelayrQuote; chainIds: PageChainId[] }
+
+/**
+ * A page on SEVERAL networks, the way juicebox.money and revnet.money do it: pin once, build one
+ * JBOmnichainDeployer launch per chain with a shared salt and start, sign a ForwardRequest for each
+ * (a wallet signature per chain, no gas), and get Relayr's prepaid quote. Nothing is sent yet.
+ */
+export async function quoteMultichainPage(args: {
   chainIds: PageChainId[]
   name: string
   logo: File | null
   owner: Address
   recipients: readonly PageRecipient[]
   onStep: (step: string) => void
-  onLaunched: (page: LaunchedPage) => void
-}): Promise<LaunchedPage[]> {
-  const early = recipientsProblem(args.recipients)
-  if (early) throw new Error(early)
-  args.onStep('Saving logo')
-  const logoUri = args.logo ? (await center.pinImage(args.logo, { filename: args.logo.name })).uri : undefined
-  args.onStep('Saving page details')
-  const { uri: projectUri } = await center.pinJson({ name: args.name, ...(logoUri ? { logoUri } : {}) })
-
-  const multi = args.chainIds.length > 1
+}): Promise<QuotedLaunch> {
+  const problem = recipientsProblem(args.recipients)
+  if (problem) throw new Error(problem)
+  const projectUri = await pinPage(args)
   const salt = toHex(crypto.getRandomValues(new Uint8Array(32)))
   const mustStartAtOrAfter = Math.floor(Date.now() / 1000)
-  const launched: LaunchedPage[] = []
-  for (const [index, chainId] of args.chainIds.entries()) {
-    const where = multi ? ` on ${chainName(chainId)} (${index + 1}/${args.chainIds.length})` : ''
-    args.onStep(`Confirm in your wallet${where}`)
+  const calls = []
+  for (const chainId of args.chainIds) {
+    args.onStep(`Reading the creation fee on ${chainName(chainId)}`)
     const creationFee = await getProjectCreationFee(client(chainId), chainId)
-    const splits = splitsOn(chainId, args.recipients, args.owner)
-    const tx = multi
-      ? pageOmnichainLaunchTx({ chainId, chainIds: args.chainIds, owner: args.owner, projectUri, creationFee, salt, mustStartAtOrAfter, splits })
-      : pageLaunchTx({ chainId, owner: args.owner, projectUri, creationFee, splits })
-    await onChain(chainId)
-    // The SDK builders return an overload union (6- or 7-arg launch) wagmi's generics cannot
-    // narrow; both are fully typed viem requests built above, so the write skips re-inference.
-    const hash = await writeContract(wagmiConfig, { ...tx, chainId } as never)
-    args.onStep(`Waiting for confirmation${where}`)
-    const receipt = await waitForTransactionReceipt(wagmiConfig, { hash, chainId })
-    const projectId = projectIdFromLaunchLogs(receipt.logs, { chainId })
-    if (projectId === null) throw new Error(`The page launched on ${chainName(chainId)} but its id could not be read from the receipt.`)
-    const page = { chainId, projectId: Number(projectId), hash }
-    launched.push(page)
-    args.onLaunched(page)
+    const tx = pageOmnichainLaunchTx({
+      chainId,
+      chainIds: args.chainIds,
+      owner: args.owner,
+      projectUri,
+      creationFee,
+      salt,
+      mustStartAtOrAfter,
+      splits: splitsOn(chainId, args.recipients, args.owner),
+    })
+    calls.push({
+      chainId,
+      to: tx.address,
+      // The forward request's value IS the creation fee: the forwarder passes it through and Relayr's quote covers it.
+      value: tx.value,
+      data: encodeFunctionData({ abi: tx.abi, functionName: tx.functionName, args: tx.args } as never),
+    })
   }
+  const entries = await signForwardRequests(calls, args.owner, args.onStep)
+  args.onStep('Getting a quote from Relayr')
+  return { quote: await requestQuote(entries), chainIds: args.chainIds }
+}
+
+/** Pay the quote on the chosen chain, then follow Relayr until every network has the page. */
+export async function launchQuotedPage(args: {
+  quoted: QuotedLaunch
+  payment: ChainPayment
+  owner: Address
+  onStep: (step: string) => void
+  onProgress: (states: { chainId: number; state: string; hash?: Hex }[]) => void
+}): Promise<LaunchedPage[]> {
+  args.onStep(`Pay on ${chainName(args.payment.chain)} in your wallet`)
+  await payQuote(args.payment, args.owner)
+  args.onStep('Relayr is launching on each network')
+  const bundle = await waitForBundle(args.quoted.quote.bundle_uuid, update =>
+    args.onProgress(
+      // Records come back in submission order, the order the chains were signed in.
+      update.transactions.map((transaction, index) => ({
+        chainId: args.quoted.chainIds[index] ?? Number(transaction.request?.chain),
+        state: transaction.status?.state ?? 'Pending',
+        hash: bundleHash(transaction),
+      })),
+    ),
+  )
+  const launched: LaunchedPage[] = []
+  for (const [index, transaction] of bundle.transactions.entries()) {
+    const chainId = args.quoted.chainIds[index]
+    const hash = bundleHash(transaction)
+    if (!hash) continue
+    const receipt = await client(chainId).getTransactionReceipt({ hash })
+    const projectId = projectIdFromLogs(receipt.logs)
+    if (projectId !== null) launched.push({ chainId, projectId, hash })
+  }
+  if (!launched.length) throw new Error('Relayr finished but no launch could be read back. Check the transactions on each network.')
   return launched
 }
 

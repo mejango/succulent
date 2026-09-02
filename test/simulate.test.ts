@@ -9,6 +9,7 @@ import { base, mainnet } from 'viem/chains'
 import { describe, expect, test } from 'vitest'
 import { pageLaunchTx, pageOmnichainLaunchTx } from '@/lib/page-launch'
 import { payOptionsFor } from '@/lib/pay-options'
+import { projectIdFromLogs } from '@/lib/tx'
 
 const live = process.env.LIVE === '1'
 const account: Address = '0x1111111111111111111111111111111111111111'
@@ -44,6 +45,14 @@ describe.skipIf(!live)('live simulations', () => {
     const markee = await payOptionsFor(baseClient, 8453, 7)
     expect(markee[0]).toMatchObject({ symbol: 'ETH', viaRouter: false })
     console.log('Markee options', markee.map(o => `${o.symbol}${o.viaRouter ? '*' : ''}`))
+  }, 60_000)
+
+  test('the project id is read from a real omnichain-deployer launch receipt', async () => {
+    // Base page 14 ("choo") was launched through JBOmnichainDeployer on 2026-09-02; the SDK decoder
+    // returned null for it because the emitting controller differs from the SDK address table.
+    const center = createPublicClient({ chain: base, transport: http('https://juicebox.center/v1/rpc/8453', { fetchOptions: { headers: { Origin: 'https://succulent.money' } } }) })
+    const receipt = await center.getTransactionReceipt({ hash: '0x03b504bb085597fb199512c11663b92c825ce45db4d6546c6659a2b1cc7afb1f' })
+    expect(projectIdFromLogs(receipt.logs)).toBe(14)
   }, 60_000)
 
   test('a single-network page launches through JBController', async () => {
