@@ -45,6 +45,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className={`${youngSerif.variable} ${plex.variable} ${plexMono.variable}`}>
       <body className="min-h-svh">
+        {/* iOS Safari zooms the page when focus lands in a field, including the field a <dialog> focuses as it
+            opens. Capping maximum-scale stops that; iOS still allows pinch zoom regardless (since iOS 10), so
+            accessibility is unaffected. Applied to iOS only so Android keeps its default pinch behavior. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html:
+              "if(/iPhone|iPad|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1)){var m=document.querySelector('meta[name=viewport]');if(m)m.setAttribute('content',m.getAttribute('content')+', maximum-scale=1');}",
+          }}
+        />
         <Providers>{children}</Providers>
       </body>
     </html>
