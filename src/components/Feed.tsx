@@ -287,21 +287,30 @@ function Row({
         <div className="flex items-center gap-2.5">
           {pin ? (
             <>
-              <button type="button" onClick={pin} aria-label={`Only ${name}`} className="shrink-0">
-                <Logo name={name} logoUri={event.project?.logoUri ?? null} />
-              </button>
-              <button type="button" onClick={pin} className="min-w-0 flex-1 truncate text-left text-[15px] font-medium leading-tight text-pine">
-                {name}
-              </button>
+              {/* One hover state for both: the name underlines and the logo lifts, whichever is under the pointer. */}
+              <span className="group/page flex min-w-0 flex-1 items-center gap-2.5">
+                <button type="button" onClick={pin} aria-label={`Only ${name}`} className="shrink-0 transition-transform group-hover/page:scale-105">
+                  <Logo name={name} logoUri={event.project?.logoUri ?? null} />
+                </button>
+                <button
+                  type="button"
+                  onClick={pin}
+                  className="min-w-0 flex-1 truncate text-left text-[15px] font-medium leading-tight text-pine underline-offset-[3px] decoration-bloom group-hover/page:underline group-hover/page:decoration-stem"
+                >
+                  {name}
+                </button>
+              </span>
             </>
           ) : (
             <>
-              <a href={project} aria-label={`Open ${name} on juicebox.money`} className="shrink-0">
-                <Logo name={name} logoUri={event.project?.logoUri ?? null} />
-              </a>
-              <a href={project} className="min-w-0 flex-1 truncate text-[15px] font-medium leading-tight text-pine">
-                {name}
-              </a>
+              <span className="group/page flex min-w-0 flex-1 items-center gap-2.5">
+                <a href={project} aria-label={`Open ${name} on juicebox.money`} className="shrink-0 transition-transform group-hover/page:scale-105">
+                  <Logo name={name} logoUri={event.project?.logoUri ?? null} />
+                </a>
+                <a href={project} className="min-w-0 flex-1 truncate text-[15px] font-medium leading-tight text-pine underline-offset-[3px] decoration-bloom group-hover/page:underline group-hover/page:decoration-stem">
+                  {name}
+                </a>
+              </span>
             </>
           )}
           <a
