@@ -156,3 +156,15 @@ dialog.ui-modal-host::backdrop {
     font-size: 16px;
   }
 }
+
+/* Icon rows that scroll sideways instead of wrapping; the scrollbar stays out of the way. */
+.scroll-row {
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  /* Let the row bleed to the panel edge so the last icon can be scrolled fully into view. */
+  margin-right: -1.5rem;
+  padding-right: 1.5rem;
+}
+.scroll-row::-webkit-scrollbar {
+  display: none;
+}

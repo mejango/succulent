@@ -515,7 +515,7 @@ export default function ParaAuthSheet({
 
       <>
         <p className="mb-2 mt-5 text-xs text-stem-light">Or, use socials</p>
-        <div className="flex flex-wrap gap-1.5">
+        <div className="scroll-row flex gap-1.5 overflow-x-auto">
           {OAUTH_METHODS.map(({ method, label }) => (
             <Button
               key={method}
@@ -524,7 +524,7 @@ export default function ParaAuthSheet({
               title={label}
               aria-label={label}
               aria-busy={pendingMethod === method}
-              className="flex h-10 w-10 items-center justify-center px-0"
+              className="flex h-10 w-10 shrink-0 items-center justify-center px-0"
               onClick={() => void submitOAuth(method)}
               disabled={busy}
             >
@@ -563,7 +563,7 @@ export default function ParaAuthSheet({
               revealing this section once they arrive would resize a panel the
               visitor is already looking at — and it is centred, so it jumps. */}
         <p className="mb-2 mt-4 text-xs text-stem-light">... or, a wallet.</p>
-        <div className="flex min-h-10 flex-wrap gap-1.5">
+        <div className="scroll-row flex min-h-10 gap-1.5 overflow-x-auto">
           {connectors.map((connector) => (
             <Button
               key={connector.id}
@@ -571,7 +571,7 @@ export default function ParaAuthSheet({
               variant="secondary"
               title={connector.name}
               aria-label={connector.name}
-              className="flex h-10 w-10 items-center justify-center px-0"
+              className="flex h-10 w-10 shrink-0 items-center justify-center px-0"
               onClick={() => {
                 connectAsync({ connector })
                   .then(onClose)
@@ -594,7 +594,7 @@ export default function ParaAuthSheet({
         {mobileWallet === "handoff" && typeof window !== "undefined" ? (
           <>
             <p className="mb-2 mt-4 text-xs text-stem-light">Open in a wallet app</p>
-            <div className="flex flex-wrap gap-1.5">
+            <div className="scroll-row flex gap-1.5 overflow-x-auto">
               {mobileWalletLinks(window.location.href).map((link) => (
                 <a
                   key={link.name}
