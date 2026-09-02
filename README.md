@@ -19,6 +19,7 @@ with "Origin is not allowed".
 npm install --legacy-peer-deps   # Para's optional peer chain conflicts with viem's ox otherwise
 npm run dev      # http://localhost:3004
 npm run check    # typecheck, lint, tests, build
+LIVE=1 npm test  # also simulates the pay and launch transactions against Base and Ethereum
 ```
 
 Env: see `.env.example`. Deploys as a Dockerfile service on Railway (`railway.json`).

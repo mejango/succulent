@@ -3,7 +3,7 @@
 import { NATIVE_TOKEN } from '@bananapus/nana-sdk-core'
 import type { PayOption } from './pay-options'
 import { createJBCenterClient } from '@bananapus/nana-sdk-core/jbcenter'
-import { buildPayTx, getProjectCreationFee, projectIdFromLaunchLogs, resolvePaymentTerminal, v6Address } from '@bananapus/nana-sdk-core/v6'
+import { buildPayTx, getProjectCreationFee, projectIdFromLaunchLogs, resolvePaymentTerminal } from '@bananapus/nana-sdk-core/v6'
 import { getPublicClient, readContract, switchChain, waitForTransactionReceipt, writeContract } from 'wagmi/actions'
 import { erc20Abi, toHex, type Address, type Hex, type PublicClient } from 'viem'
 import { pageLaunchTx, pageOmnichainLaunchTx, type PageSplit } from './page-launch'
@@ -40,9 +40,9 @@ export async function postToPage(args: {
 }): Promise<Hex> {
   const { chainId, option } = args
   const projectId = BigInt(args.projectId)
-  const terminal = option.viaRouter
-    ? v6Address('JBRouterTerminalRegistry', chainId)
-    : (await resolvePaymentTerminal(client(chainId), { chainId, projectId, token: option.token })).address
+  // JBDirectory decides: the project's primary terminal for this token when it has one (Artizen's ETH
+  // terminal is a router terminal it registered itself), else the router registry. Never assume.
+  const terminal = (await resolvePaymentTerminal(client(chainId), { chainId, projectId, token: option.token })).address
   await onChain(chainId)
   if (option.token.toLowerCase() !== NATIVE_TOKEN.toLowerCase() && args.amount > 0n) {
     const allowance = await readContract(wagmiConfig, {

@@ -1,6 +1,6 @@
 'use client'
 
-import { createConfig, http } from 'wagmi'
+import { createConfig, fallback, http } from 'wagmi'
 import { arbitrum, base, mainnet, optimism } from 'wagmi/chains'
 import { injected } from 'wagmi/connectors/injected'
 import { IS_DETERMINISTIC_BROWSER, PARA_EMBEDDED_WALLET_ENABLED } from './browserEnvironment'
@@ -18,11 +18,22 @@ const RPC: Record<number, string | undefined> = {
   42161: process.env.NEXT_PUBLIC_RPC_42161,
 }
 
+// The chains' default public RPCs rate-limit quickly (mainnet.base.org answered "over rate limit" in
+// testing), so each chain tries the configured RPC, then publicnode, then the default.
+const PUBLICNODE: Record<number, string> = {
+  1: 'https://ethereum-rpc.publicnode.com',
+  10: 'https://optimism-rpc.publicnode.com',
+  8453: 'https://base-rpc.publicnode.com',
+  42161: 'https://arbitrum-one-rpc.publicnode.com',
+}
+const transport = (chainId: number) =>
+  fallback([...(RPC[chainId] ? [http(RPC[chainId])] : []), http(PUBLICNODE[chainId]), http()])
+
 export const transports = {
-  [mainnet.id]: http(RPC[1]),
-  [optimism.id]: http(RPC[10]),
-  [base.id]: http(RPC[8453]),
-  [arbitrum.id]: http(RPC[42161]),
+  [mainnet.id]: transport(1),
+  [optimism.id]: transport(10),
+  [base.id]: transport(8453),
+  [arbitrum.id]: transport(42161),
 }
 
 /**
