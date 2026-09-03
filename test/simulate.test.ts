@@ -48,11 +48,11 @@ describe.skipIf(!live)('live simulations', () => {
   }, 60_000)
 
   test('the project id is read from a real omnichain-deployer launch receipt', async () => {
-    // Base page 14 ("choo") was launched through JBOmnichainDeployer on 2026-09-02; the SDK decoder
-    // returned null for it because the emitting controller differs from the SDK address table.
+    // Base page 14 ("choo") was launched through JBOmnichainDeployer on 2026-09-02; SDK < 2.4.1 decoded it
+    // to null because that path emits LaunchRulesets, not LaunchProject.
     const center = createPublicClient({ chain: base, transport: http('https://juicebox.center/v1/rpc/8453', { fetchOptions: { headers: { Origin: 'https://succulent.money' } } }) })
     const receipt = await center.getTransactionReceipt({ hash: '0x03b504bb085597fb199512c11663b92c825ce45db4d6546c6659a2b1cc7afb1f' })
-    expect(projectIdFromLogs(receipt.logs)).toBe(14)
+    expect(projectIdFromLogs(receipt.logs, 8453)).toBe(14)
   }, 60_000)
 
   test('a single-network page launches through JBController', async () => {

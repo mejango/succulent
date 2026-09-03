@@ -3,10 +3,9 @@
 import { NATIVE_TOKEN } from '@bananapus/nana-sdk-core'
 import type { PayOption } from './pay-options'
 import { createJBCenterClient } from '@bananapus/nana-sdk-core/jbcenter'
-import { buildPayTx, getProjectCreationFee, resolvePaymentTerminal } from '@bananapus/nana-sdk-core/v6'
+import { buildPayTx, getProjectCreationFee, projectIdFromLaunchLogs, resolvePaymentTerminal } from '@bananapus/nana-sdk-core/v6'
 import { getPublicClient, readContract, switchChain, waitForTransactionReceipt, writeContract } from 'wagmi/actions'
-import { encodeFunctionData, erc20Abi, parseEventLogs, toHex, type Address, type Hex, type Log, type PublicClient } from 'viem'
-import { jbControllerAbi, jbProjectsAbi } from '@bananapus/nana-sdk-core'
+import { encodeFunctionData, erc20Abi, toHex, type Address, type Hex, type Log, type PublicClient } from 'viem'
 import { pageLaunchTx, pageOmnichainLaunchTx, type PageSplit } from './page-launch'
 import type { PageRef } from './bendystraw'
 import { chainName } from './chains'
@@ -139,17 +138,13 @@ export function splitsOn(chainId: number, recipients: readonly PageRecipient[], 
 }
 
 /**
- * The project id from a launch receipt. JBProjects' `Create(projectId, owner, caller)` is the one
- * event every launch path emits with a stable signature; the controller behind the omnichain
- * deployer emits a LaunchProject the SDK's ABI does not decode, so that is only the fallback.
+ * The project id from a launch receipt, via the SDK (2.4.1+), which decodes LaunchProject or
+ * LaunchRulesets from the canonical controller and Create from the canonical JBProjects, so
+ * deployer-created (omnichain) launches resolve too.
  */
-export function projectIdFromLogs(logs: Log[]): number | null {
-  const created = parseEventLogs({ abi: jbProjectsAbi, eventName: 'Create', logs, strict: false })
-  const fromProjects = created[0]?.args.projectId
-  if (fromProjects !== undefined) return Number(fromProjects)
-  const launched = parseEventLogs({ abi: jbControllerAbi, eventName: 'LaunchProject', logs, strict: false })
-  const fromController = launched[0]?.args.projectId
-  return fromController === undefined ? null : Number(fromController)
+export function projectIdFromLogs(logs: Log[], chainId: PageChainId): number | null {
+  const projectId = projectIdFromLaunchLogs(logs, { chainId })
+  return projectId === null ? null : Number(projectId)
 }
 
 async function pinPage(args: { name: string; logo: File | null; onStep: (step: string) => void }): Promise<string> {
@@ -179,7 +174,7 @@ export async function createPage(args: {
   const hash = await writeContract(wagmiConfig, { ...tx, chainId } as never)
   args.onStep('Waiting for confirmation')
   const receipt = await waitForTransactionReceipt(wagmiConfig, { hash, chainId })
-  const projectId = projectIdFromLogs(receipt.logs)
+  const projectId = projectIdFromLogs(receipt.logs, chainId)
   if (projectId === null) throw new Error(`The page launched on ${chainName(chainId)} but its id could not be read from the receipt.`)
   return { chainId, projectId, hash }
 }
@@ -258,7 +253,7 @@ export async function launchQuotedPage(args: {
     const hash = bundleHash(transaction)
     if (!hash) continue
     const receipt = await client(chainId).getTransactionReceipt({ hash })
-    const projectId = projectIdFromLogs(receipt.logs)
+    const projectId = projectIdFromLogs(receipt.logs, chainId)
     if (projectId !== null) launched.push({ chainId, projectId, hash })
   }
   if (!launched.length) throw new Error('Relayr finished but no launch could be read back. Check the transactions on each network.')
