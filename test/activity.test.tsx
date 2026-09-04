@@ -53,3 +53,27 @@ test('a project without an ERC-20 counts in token credits', () => {
   expect(text(row.action)).toBe('cashed out 12 token credits')
   expect(row.direction).toBe('out')
 })
+
+test('a reserved distribution lists its split receipts, biggest first, instead of separate rows', () => {
+  const events: ActivityEvent[] = [
+    { ...base, id: 'small', sendReservedTokensToSplitEvent: { tokenCount: '1000000000000000000000', beneficiary: '0xcccccccccccccccccccccccccccccccccccccccc', splitProjectId: 0, from: '0xa', txHash: '0xtx', timestamp: base.timestamp } },
+    { ...base, id: 'all', sendReservedTokensToSplitsEvent: { tokenCount: '3600000000000000000000000', from: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' } },
+    { ...base, id: 'big', sendReservedTokensToSplitEvent: { tokenCount: '3599000000000000000000000', beneficiary: '0x0000000000000000000000000000000000000000', splitProjectId: 9, from: '0xa', txHash: '0xtx', timestamp: base.timestamp } },
+    { ...base, id: 'lone', txHash: '0xlone', sendReservedTokensToSplitEvent: { tokenCount: '2000000000000000000', beneficiary: '0xdddddddddddddddddddddddddddddddddddddddd', splitProjectId: 0, from: '0xa', txHash: '0xlone', timestamp: base.timestamp } },
+  ]
+  const groups = groupSameTxEvents(events)
+  expect(groups.map(group => group.length)).toEqual([3, 1])
+
+  const row = combinedActivityParts(groups[0])
+  expect(row.actor).toBe('0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')
+  expect(text(row.action)).toBe('distributed reserved 3.6m MARKEE')
+  expect(row.recipients.map(recipient => [recipient.splitProjectId, recipient.beneficiary])).toEqual([
+    [9, '0x0000000000000000000000000000000000000000'],
+    [0, '0xcccccccccccccccccccccccccccccccccccccccc'],
+  ])
+
+  const lone = combinedActivityParts(groups[1])
+  expect(lone.actor).toBe('0xdddddddddddddddddddddddddddddddddddddddd')
+  expect(text(lone.action)).toBe('received 2 MARKEE from a reserved split')
+  expect(lone.recipients).toEqual([])
+})

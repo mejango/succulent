@@ -42,7 +42,7 @@ export const ACTIVITY_FILTER_FIELDS: Record<ActivityFilter, readonly string[]> =
   buybackSwap: ['swapEvent'],
   tokenMint: ['mintTokensEvent'],
   payout: ['sendPayoutsEvent'],
-  reserved: ['sendReservedTokensToSplitsEvent'],
+  reserved: ['sendReservedTokensToSplitsEvent', 'sendReservedTokensToSplitEvent'],
   autoIssue: ['autoIssueEvent'],
   nftMint: ['mintNftEvent'],
   shopItem: ['addNftTierEvent', 'removeNftTierEvent'],
@@ -63,7 +63,7 @@ export function activityFilterOf(event: ActivityEvent): ActivityFilter | null {
   if (event.swapEvent) return 'buybackSwap'
   if (event.mintTokensEvent) return 'tokenMint'
   if (event.sendPayoutsEvent) return 'payout'
-  if (event.sendReservedTokensToSplitsEvent) return 'reserved'
+  if (event.sendReservedTokensToSplitsEvent || event.sendReservedTokensToSplitEvent) return 'reserved'
   if (event.autoIssueEvent) return 'autoIssue'
   if (event.mintNftEvent) return 'nftMint'
   if (event.addNftTierEvent || event.removeNftTierEvent) return 'shopItem'
@@ -141,6 +141,9 @@ function Amount({ children }: { children: ReactNode }) {
   return <span className="font-medium text-ink">{children}</span>
 }
 
+/** Where one split of a reserved-token distribution went: a project when `splitProjectId` is set, else the address. */
+export type Recipient = { tokenCount: string; beneficiary: string; splitProjectId: number }
+
 export type Parts = {
   actor: string
   action: ReactNode
@@ -148,6 +151,8 @@ export type Parts = {
   memo: string | null
   amountUsd: string | null | undefined
   amountRaw: string | null | undefined
+  /** Biggest first; only set on a row that carries the distribution itself. */
+  recipients: Recipient[]
 }
 
 export function activityParts(event: ActivityEvent, unit: string): Parts {
@@ -156,6 +161,7 @@ export function activityParts(event: ActivityEvent, unit: string): Parts {
   const mint = event.mintTokensEvent
   const loan = event.borrowLoanEvent
   const swap = event.swapEvent
+  const receipt = event.sendReservedTokensToSplitEvent
   const swapIsSell = swap?.direction.toLowerCase() === 'sell'
   const actor =
     pay?.beneficiary ??
@@ -170,6 +176,7 @@ export function activityParts(event: ActivityEvent, unit: string): Parts {
     event.deployErc20Event?.from ??
     event.sendPayoutsEvent?.from ??
     event.sendReservedTokensToSplitsEvent?.from ??
+    receipt?.beneficiary ??
     event.repayLoanEvent?.from ??
     event.liquidateLoanEvent?.from ??
     event.setUriEvent?.caller ??
@@ -188,6 +195,7 @@ export function activityParts(event: ActivityEvent, unit: string): Parts {
     mint?.beneficiaryTokenCount ??
     event.autoIssueEvent?.count ??
     event.sendReservedTokensToSplitsEvent?.tokenCount ??
+    receipt?.tokenCount ??
     swap?.projectTokenAmount ??
     event.bridgeClaimEvent?.projectTokenCount ??
     '0'
@@ -221,6 +229,8 @@ export function activityParts(event: ActivityEvent, unit: string): Parts {
     <>paid out</>
   ) : event.sendReservedTokensToSplitsEvent ? (
     <>distributed reserved {tokens}</>
+  ) : receipt ? (
+    <>received {tokens} from a reserved split</>
   ) : event.autoIssueEvent ? (
     <>auto-issued {tokens}</>
   ) : loan ? (
@@ -263,7 +273,13 @@ export function activityParts(event: ActivityEvent, unit: string): Parts {
       event.addToBalanceEvent?.amount ??
       event.sendPayoutsEvent?.amountPaidOut ??
       swap?.terminalTokenAmount,
+    recipients: [],
   }
+}
+
+function byTokenCountDesc(a: Recipient, b: Recipient): number {
+  const diff = BigInt(b.tokenCount) - BigInt(a.tokenCount)
+  return diff > 0n ? 1 : diff < 0n ? -1 : 0
 }
 
 function reservePercent(swapOut: string, minted: string): string | null {
@@ -294,7 +310,11 @@ export function combinedActivityParts(group: ActivityEvent[]): Parts {
   const sorted = [...group].sort((a, b) => rank(a) - rank(b))
   // An issuance-route pay already says "bought X"; its mintTokensEvent is the same issuance.
   const payIssued = sorted.some(entry => positive(entry.payEvent?.newlyIssuedTokenCount))
-  const ordered = payIssued ? sorted.filter(entry => !entry.mintTokensEvent) : sorted
+  // A distribution's per-split receipts list under it rather than reading as their own clauses.
+  const distributed = sorted.some(entry => entry.sendReservedTokensToSplitsEvent)
+  const ordered = sorted.filter(
+    entry => !(payIssued && entry.mintTokensEvent) && !(distributed && entry.sendReservedTokensToSplitEvent),
+  )
   const parts = ordered.map(entry => activityParts(entry, unit))
 
   // A buyback pay pairs the pool swap (gross) with the reserved-rate remint (net).
@@ -325,5 +345,8 @@ export function combinedActivityParts(group: ActivityEvent[]): Parts {
     amountUsd: parts.find(part => part.amountUsd != null)?.amountUsd,
     amountRaw: parts.find(part => part.amountRaw != null)?.amountRaw,
     direction: parts.find(part => part.direction)?.direction ?? null,
+    recipients: distributed
+      ? sorted.flatMap(entry => (entry.sendReservedTokensToSplitEvent ? [entry.sendReservedTokensToSplitEvent] : [])).sort(byTokenCountDesc)
+      : [],
   }
 }

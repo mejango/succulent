@@ -2,9 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ActivityEvent, FeedPage, PinnedPage } from '@/lib/bendystraw'
-import { ACTIVITY_FILTERS, combinedActivityParts, groupSameTxEvents, type ActivityFilter } from '@/lib/activity'
+import { ACTIVITY_FILTERS, combinedActivityParts, groupSameTxEvents, tokenUnit, type ActivityFilter } from '@/lib/activity'
 import { addressUrl, chainIcon, chainName, chainSlug, pagePath, projectUrl, txUrl } from '@/lib/chains'
-import { formatDate, formatTokenAmount, formatUsd18, projectLogoUrl, timeAgo, truncateAddress } from '@/lib/format'
+import { formatCompactTokenAmount, formatDate, formatTokenAmount, formatUsd18, projectLogoUrl, timeAgo, truncateAddress } from '@/lib/format'
 import { Compose } from './Compose'
 
 const POLL_MS = 15_000
@@ -252,7 +252,7 @@ function Row({
 }) {
   const event = group[0]
   const name = event.project?.name?.trim() || `Project ${event.projectId}`
-  const { actor, action, direction, memo, amountUsd, amountRaw } = combinedActivityParts(group)
+  const { actor, action, direction, memo, amountUsd, amountRaw, recipients } = combinedActivityParts(group)
   const amount = signedAmount(event, amountUsd, amountRaw)
   const relative = timeAgo(event.timestamp, now)
   const actorHref = addressUrl(event.chainId, actor)
@@ -338,6 +338,26 @@ function Row({
           {action}
         </p>
         {memo ? <p className="mt-1.5 break-words text-[13px] leading-relaxed text-pine">“{memo}”</p> : null}
+        {recipients.length ? (
+          <ul className="mt-1.5 space-y-0.5 text-[12px] leading-relaxed text-stem">
+            {recipients.map((recipient, index) => {
+              const href = recipient.splitProjectId > 0 ? projectUrl(event.chainId, recipient.splitProjectId) : addressUrl(event.chainId, recipient.beneficiary)
+              const label = recipient.splitProjectId > 0 ? `project #${recipient.splitProjectId}` : truncateAddress(recipient.beneficiary)
+              return (
+                <li key={index}>
+                  {formatCompactTokenAmount(recipient.tokenCount)} {tokenUnit(event)} to{' '}
+                  {href ? (
+                    <a href={href} target="_blank" rel="noopener noreferrer" title={recipient.beneficiary} className="font-mono text-pine underline decoration-bloom underline-offset-2">
+                      {label}
+                    </a>
+                  ) : (
+                    <span title={recipient.beneficiary} className="font-mono text-pine">{label}</span>
+                  )}
+                </li>
+              )
+            })}
+          </ul>
+        ) : null}
         {amount ? (
           <p
             className={`mt-2 font-mono text-sm font-medium ${

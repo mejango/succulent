@@ -27,6 +27,8 @@ export type ActivityEvent = {
   mintTokensEvent?: { beneficiary: string; beneficiaryTokenCount: string; caller: string; from: string } | null
   sendPayoutsEvent?: { amount: string; amountPaidOut: string; amountPaidOutUsd: string | null; caller: string; from: string } | null
   sendReservedTokensToSplitsEvent?: { tokenCount: string; from: string } | null
+  /** One per split the distribution above reached; same tx as its `sendReservedTokensToSplitsEvent`. */
+  sendReservedTokensToSplitEvent?: { tokenCount: string; beneficiary: string; splitProjectId: number; from: string; txHash: string; timestamp: number } | null
   autoIssueEvent?: { beneficiary: string; count: string; stageId: string; from: string } | null
   borrowLoanEvent?: { borrowAmount: string; collateral: string; beneficiary: string; token: string; from: string } | null
   repayLoanEvent?: { repayBorrowAmount: string; collateralCountToReturn: string; from: string } | null
@@ -45,7 +47,7 @@ export type ActivityEvent = {
 
 const EVENT_KINDS = [
   'payEvent', 'cashOutTokensEvent', 'projectCreateEvent', 'addToBalanceEvent', 'mintTokensEvent',
-  'sendPayoutsEvent', 'sendReservedTokensToSplitsEvent', 'autoIssueEvent', 'borrowLoanEvent',
+  'sendPayoutsEvent', 'sendReservedTokensToSplitsEvent', 'sendReservedTokensToSplitEvent', 'autoIssueEvent', 'borrowLoanEvent',
   'repayLoanEvent', 'liquidateLoanEvent', 'mintNftEvent', 'deployErc20Event', 'setUriEvent',
   'projectTransferEvent', 'rulesetQueuedEvent', 'addNftTierEvent', 'removeNftTierEvent',
   'swapEvent', 'buybackPoolEvent', 'bridgeClaimEvent',
@@ -70,6 +72,7 @@ const query = (withGroup: boolean, kinds: readonly string[] = EVENT_KINDS) => `q
       mintTokensEvent { beneficiary beneficiaryTokenCount caller from }
       sendPayoutsEvent { amount amountPaidOut amountPaidOutUsd caller from }
       sendReservedTokensToSplitsEvent { tokenCount from }
+      sendReservedTokensToSplitEvent { tokenCount beneficiary splitProjectId from txHash timestamp }
       autoIssueEvent { beneficiary count stageId from }
       borrowLoanEvent { borrowAmount collateral beneficiary token from }
       repayLoanEvent { repayBorrowAmount collateralCountToReturn from }
