@@ -1,16 +1,18 @@
 'use client'
 
-import { NATIVE_TOKEN } from '@bananapus/nana-sdk-core'
+import { JBCoreContracts, NATIVE_TOKEN, erc2771ForwarderAbi, jbContractAddress } from '@bananapus/nana-sdk-core'
 import type { PayOption } from './pay-options'
 import { createJBCenterClient } from '@bananapus/nana-sdk-core/jbcenter'
 import { buildPayTx, getProjectCreationFee, projectIdFromLaunchLogs, resolvePaymentTerminal } from '@bananapus/nana-sdk-core/v6'
-import { getPublicClient, readContract, switchChain, waitForTransactionReceipt, writeContract } from 'wagmi/actions'
-import { encodeFunctionData, erc20Abi, toHex, type Address, type Hex, type Log, type PublicClient } from 'viem'
+import { getAccount, getPublicClient, readContract, sendTransaction, switchChain, waitForTransactionReceipt, writeContract } from 'wagmi/actions'
+import { encodeFunctionData, erc20Abi, isAddressEqual, toHex, type Address, type Hex, type Log, type PublicClient } from 'viem'
 import { pageLaunchTx, pageOmnichainLaunchTx, type PageSplit } from './page-launch'
 import type { PageRef } from './bendystraw'
 import { chainName } from './chains'
 import { wagmiConfig, type PageChainId } from './wagmi'
-import { payQuote, requestQuote, signForwardRequests, waitForBundle, bundleHash, type ChainPayment, type RelayrQuote } from './relayr'
+import { assertForwardRequestBindings, payQuote, requestQuote, signForwardRequests, verifyForwardRequests, bindQuote, getBundle, bundleHash, paymentOptions, supportsRelayrChains, type ChainPayment, type RelayrCall } from './relayr'
+import { loadPageLaunch, savePageLaunch, withPageLaunchLock, type PageLaunchSession } from './page-launch-session'
+import { safeExecutionHash, verifySafeLaunch } from './launch-safe'
 
 const center = createJBCenterClient()
 
@@ -147,117 +149,367 @@ export function projectIdFromLogs(logs: Log[], chainId: PageChainId): number | n
   return projectId === null ? null : Number(projectId)
 }
 
-async function pinPage(args: { name: string; logo: File | null; onStep: (step: string) => void }): Promise<string> {
+async function pinPage(args: { name: string; logo: File | null; onStep: (step: string) => void }): Promise<{ projectUri: string; logoUri?: string }> {
   args.onStep('Saving logo')
   const logoUri = args.logo ? (await center.pinImage(args.logo, { filename: args.logo.name })).uri : undefined
   args.onStep('Saving page details')
-  return (await center.pinJson({ name: args.name, ...(logoUri ? { logoUri } : {}) })).uri
+  return { projectUri: (await center.pinJson({ name: args.name, ...(logoUri ? { logoUri } : {}) })).uri, logoUri }
 }
 
-/** A page on ONE network: pin, then one JBController launch from the wallet. */
-export async function createPage(args: {
-  chainId: PageChainId
-  name: string
-  logo: File | null
-  owner: Address
-  recipients: readonly PageRecipient[]
-  onStep: (step: string) => void
-}): Promise<LaunchedPage> {
-  const problem = recipientsProblem(args.recipients)
-  if (problem) throw new Error(problem)
-  const { chainId } = args
-  const projectUri = await pinPage(args)
-  args.onStep('Confirm in your wallet')
-  const creationFee = await getProjectCreationFee(client(chainId), chainId)
-  const tx = pageLaunchTx({ chainId, owner: args.owner, projectUri, creationFee, splits: splitsOn(chainId, args.recipients, args.owner) })
-  await onChain(chainId)
-  const hash = await writeContract(wagmiConfig, { ...tx, chainId } as never)
-  args.onStep('Waiting for confirmation')
-  const receipt = await waitForTransactionReceipt(wagmiConfig, { hash, chainId })
-  const projectId = projectIdFromLogs(receipt.logs, chainId)
-  if (projectId === null) throw new Error(`The page launched on ${chainName(chainId)} but its id could not be read from the receipt.`)
-  return { chainId, projectId, hash }
-}
+export type QuotedLaunch = PageLaunchSession
 
-export type QuotedLaunch = { quote: RelayrQuote; chainIds: PageChainId[] }
-
-/**
- * A page on SEVERAL networks, the way juicebox.money and revnet.money do it: pin once, build one
- * JBOmnichainDeployer launch per chain with a shared salt and start, sign a ForwardRequest for each
- * (a wallet signature per chain, no gas), and get Relayr's prepaid quote. Nothing is sent yet.
- */
-export async function quoteMultichainPage(args: {
+type LaunchArgs = {
   chainIds: PageChainId[]
   name: string
   logo: File | null
   owner: Address
   recipients: readonly PageRecipient[]
   onStep: (step: string) => void
-}): Promise<QuotedLaunch> {
-  const problem = recipientsProblem(args.recipients)
-  if (problem) throw new Error(problem)
-  const projectUri = await pinPage(args)
-  const salt = toHex(crypto.getRandomValues(new Uint8Array(32)))
-  const mustStartAtOrAfter = Math.floor(Date.now() / 1000)
-  const calls = []
-  for (const chainId of args.chainIds) {
-    args.onStep(`Reading the creation fee on ${chainName(chainId)}`)
-    const creationFee = await getProjectCreationFee(client(chainId), chainId)
-    const tx = pageOmnichainLaunchTx({
-      chainId,
-      chainIds: args.chainIds,
-      owner: args.owner,
-      projectUri,
-      creationFee,
-      salt,
-      mustStartAtOrAfter,
-      splits: splitsOn(chainId, args.recipients, args.owner),
-    })
-    calls.push({
-      chainId,
-      to: tx.address,
-      // The forward request's value IS the creation fee: the forwarder passes it through and Relayr's quote covers it.
-      value: tx.value,
-      data: encodeFunctionData({ abi: tx.abi, functionName: tx.functionName, args: tx.args } as never),
-    })
-  }
-  const entries = await signForwardRequests(calls, args.owner, args.onStep)
-  args.onStep('Getting a quote from Relayr')
-  return { quote: await requestQuote(entries), chainIds: args.chainIds }
+  onSession?: (session: PageLaunchSession) => void
 }
 
-/** Pay the quote on the chosen chain, then follow Relayr until every network has the page. */
+export function isSafeWallet(): boolean {
+  const connector = getAccount(wagmiConfig).connector
+  return connector?.id === 'safe' || connector?.type === 'safe'
+}
+
+function requireOwner(owner: Address) {
+  const connected = getAccount(wagmiConfig).address
+  if (!connected || !isAddressEqual(connected, owner)) throw new Error('Connect the wallet that started this launch.')
+}
+
+/** Only an explicit wallet rejection proves that a send did not reach the wallet. */
+function rejected(error: unknown): boolean {
+  let current = error
+  for (let depth = 0; depth < 8 && current && typeof current === 'object'; depth++) {
+    const item = current as { code?: number; name?: string; cause?: unknown }
+    if (item.code === 4001 || item.name === 'UserRejectedRequestError') return true
+    current = item.cause
+  }
+  return false
+}
+
+function launchCalls(session: PageLaunchSession): RelayrCall[] {
+  return session.chainIds.map(chainId => {
+    const common = { chainId, owner: session.owner, projectUri: session.projectUri,
+      creationFee: BigInt(session.fees[chainId]), splits: splitsOn(chainId, session.recipients, session.owner) }
+    const tx = session.chainIds.length > 1
+      ? pageOmnichainLaunchTx({ ...common, chainIds: session.chainIds, salt: session.id, mustStartAtOrAfter: session.mustStartAtOrAfter })
+      : pageLaunchTx(common)
+    return { chainId, to: tx.address, value: tx.value,
+      data: encodeFunctionData({ abi: tx.abi, functionName: tx.functionName, args: tx.args } as never) }
+  })
+}
+
+async function prepareSession(args: LaunchArgs): Promise<PageLaunchSession> {
+  if (!supportsRelayrChains(args.chainIds)) throw new Error('Choose unique supported networks from one network environment.')
+  const problem = recipientsProblem(args.recipients)
+  if (problem) throw new Error(problem)
+  requireOwner(args.owner)
+  const existing = loadPageLaunch()
+  if (existing) {
+    if (existing.phase !== 'complete') throw new Error('A launch is already saved. Resume it before starting another.')
+  }
+  // Prove storage works before metadata upload or any wallet interaction.
+  const probe = 'succulent:storage-check'
+  localStorage.setItem(probe, '1')
+  if (localStorage.getItem(probe) !== '1') throw new Error('Enable browser storage before launching a page.')
+  localStorage.removeItem(probe)
+  const { projectUri, logoUri } = await pinPage(args)
+  const fees: Record<number, string> = {}
+  for (const chainId of args.chainIds) {
+    args.onStep(`Reading the creation fee on ${chainName(chainId)}`)
+    fees[chainId] = (await getProjectCreationFee(client(chainId), chainId)).toString()
+  }
+  const session: PageLaunchSession = {
+    version: 1, id: toHex(crypto.getRandomValues(new Uint8Array(32))), owner: args.owner,
+    name: args.name, projectUri, logoUri, chainIds: [...args.chainIds], recipients: structuredClone([...args.recipients]),
+    mustStartAtOrAfter: Math.floor(Date.now() / 1000), fees, transport: 'direct',
+    phase: 'prepared', signed: [], direct: {}, launched: [],
+  }
+  if (session.chainIds.length > 1 && !isSafeWallet()) {
+    const trusted = await Promise.all(launchCalls(session).map(async call => {
+      const forwarder = jbContractAddress['6'][JBCoreContracts.ERC2771Forwarder][call.chainId]
+      if (!forwarder) return false
+      return client(call.chainId).readContract({ address: call.to,
+        abi: [{ type: 'function', name: 'isTrustedForwarder', stateMutability: 'view', inputs: [{ name: 'forwarder', type: 'address' }], outputs: [{ type: 'bool' }] }],
+        functionName: 'isTrustedForwarder', args: [forwarder] })
+    }))
+    if (trusted.every(Boolean)) session.transport = 'relayr'
+  }
+  savePageLaunch(session)
+  args.onSession?.(structuredClone(session))
+  return session
+}
+
+async function quoteSession(session: PageLaunchSession, onStep: (step: string) => void, persist: () => void) {
+  if (isSafeWallet()) throw new Error('Reconnect the ordinary wallet that signed this Relayr launch.')
+  let unboundQuote = session.phase === 'quoting' ? session.quote : undefined
+  const calls = launchCalls(session)
+  if (session.signed.some(item => item.deadline <= Math.floor(Date.now() / 1000) + 120)) {
+    assertForwardRequestBindings(calls.slice(0, session.signed.length), session.owner, session.signed)
+    for (const signed of session.signed) {
+      const rpc = client(signed.entry.chain as PageChainId)
+      const block = await rpc.getBlock({ blockTag: 'finalized' })
+      const nonce = await rpc.readContract({ address: signed.entry.target, abi: erc2771ForwarderAbi,
+        functionName: 'nonces', args: [session.owner], blockNumber: block.number })
+      const canonical = await rpc.getBlock({ blockNumber: block.number })
+      if (block.hash !== canonical.hash || block.timestamp <= BigInt(signed.deadline) || nonce !== BigInt(signed.nonce)) {
+        throw new Error('The original launch signatures are not proven expired and unused. Check the original launch before signing again.')
+      }
+    }
+    session.signed = []
+    delete session.quote
+    delete session.previousQuotes
+    unboundQuote = undefined
+    persist()
+  }
+  session.phase = 'signing'
+  persist()
+  const entries = await signForwardRequests(calls, session.owner, onStep, {
+    signed: session.signed,
+    onSigned: signed => { session.signed = signed; persist() },
+  })
+  session.phase = 'quoting'
+  persist()
+  onStep('Getting a quote from Relayr')
+  // An expired/unreceived unfunded quote reuses the exact signed calls and their nonce.
+  if (!unboundQuote && session.quote) {
+    session.previousQuotes = [...(session.previousQuotes ?? []).filter(quote => quote.bundle_uuid !== session.quote!.bundle_uuid), session.quote]
+    persist()
+  }
+  session.quote = unboundQuote ?? await requestQuote(entries)
+  persist()
+  session.quote = await bindQuote(session.quote, entries)
+  session.previousQuotes = session.previousQuotes?.filter(quote => quote.bundle_uuid !== session.quote!.bundle_uuid)
+  delete session.payment
+  session.phase = 'quoted'
+  persist()
+  if (!paymentOptions(session.quote, session.chainIds).length) throw new Error('Relayr returned no valid payment options. Check again for a fresh quote.')
+}
+
+async function confirmedPage(call: RelayrCall, hash: Hex, safe?: { account: Address; proposal: Hex }, directOwner?: Address): Promise<LaunchedPage> {
+  const rpc = client(call.chainId)
+  const [tx, receipt] = await Promise.all([rpc.getTransaction({ hash }), rpc.getTransactionReceipt({ hash })])
+  if (tx.hash !== hash || receipt.transactionHash !== hash || !tx.to || tx.chainId !== call.chainId ||
+      tx.blockHash !== receipt.blockHash) throw new Error(`The transaction on ${chainName(call.chainId)} does not match this launch.`)
+  if (directOwner && !safe && !isAddressEqual(tx.from, directOwner)) throw new Error('The direct launch came from a different account.')
+  if (safe) verifySafeLaunch({ safe: safe.account, proposal: safe.proposal, call, to: tx.to, input: tx.input, receipt })
+  else if (!isAddressEqual(tx.to, call.to) || tx.input.toLowerCase() !== call.data.toLowerCase() || tx.value !== call.value) {
+    throw new Error(`The transaction on ${chainName(call.chainId)} does not match this launch.`)
+  }
+  const block = await rpc.getBlock({ blockNumber: receipt.blockNumber })
+  if (block.hash !== receipt.blockHash) throw new Error('The launch receipt is no longer canonical. Check again.')
+  if (receipt.status !== 'success') throw new Error(`The launch reverted on ${chainName(call.chainId)}. Its saved transaction will not be sent again automatically.`)
+  const projectId = projectIdFromLogs(receipt.logs, call.chainId)
+  if (projectId === null || !Number.isSafeInteger(projectId) || projectId <= 0) throw new Error(`The project ID on ${chainName(call.chainId)} could not be verified.`)
+  return { chainId: call.chainId, projectId, hash }
+}
+
+async function runDirect(session: PageLaunchSession, onStep: (step: string) => void, persist: () => void): Promise<LaunchedPage[]> {
+  for (const call of launchCalls(session)) {
+    let record = session.direct[call.chainId]
+    if (record?.phase === 'sending' && !record.hash) throw new Error(`The wallet submission on ${chainName(call.chainId)} is uncertain. Check the original wallet transaction; do not launch again.`)
+    if (!record) {
+      onStep(`Confirm the launch on ${chainName(call.chainId)}`)
+      await onChain(call.chainId)
+      requireOwner(session.owner)
+      await client(call.chainId).call({ account: session.owner, to: call.to, data: call.data, value: call.value })
+      requireOwner(session.owner)
+      const safe = isSafeWallet()
+      session.direct[call.chainId] = { phase: 'sending' }
+      persist()
+      let hash: Hex
+      try {
+        hash = await sendTransaction(wagmiConfig, { chainId: call.chainId, account: session.owner, to: call.to, data: call.data, value: call.value })
+      } catch (error) {
+        if (rejected(error)) { delete session.direct[call.chainId]; persist() }
+        throw error
+      }
+      record = safe ? { phase: 'submitted', safeProposal: hash } : { phase: 'submitted', hash }
+      session.direct[call.chainId] = record
+      persist()
+    }
+    if (record.safeProposal && !record.hash) {
+      record.hash = await safeExecutionHash(call.chainId, record.safeProposal)
+      persist()
+    }
+    if (!record.hash) throw new Error('The original launch hash is unavailable. Do not send another launch.')
+    onStep(`Checking the launch on ${chainName(call.chainId)}`)
+    await client(call.chainId).waitForTransactionReceipt({ hash: record.hash, timeout: 90_000 })
+    const page = await confirmedPage(call, record.hash, record.safeProposal ? { account: session.owner, proposal: record.safeProposal } : undefined, session.owner)
+    session.launched = [...session.launched.filter(item => item.chainId !== call.chainId), page]
+    record.phase = 'complete'
+    persist()
+  }
+  session.phase = 'complete'
+  persist()
+  return session.launched
+}
+
+/** Pin once and save the complete plan before signing; all subsequent attempts resume that plan. */
+export async function quoteMultichainPage(args: LaunchArgs): Promise<QuotedLaunch> {
+  return withPageLaunchLock(async () => {
+    const session = await prepareSession(args)
+    const persist = () => { savePageLaunch(session); args.onSession?.(structuredClone(session)) }
+    if (session.transport === 'direct') await runDirect(session, args.onStep, persist)
+    else await quoteSession(session, args.onStep, persist)
+    return structuredClone(session)
+  })
+}
+
+/** Resume an unfunded quote without rebuilding its pinned launch or changing any signed nonce. */
+export async function resumePageQuote(args: {
+  session: PageLaunchSession; owner: Address; onStep: (step: string) => void; onSession?: (session: PageLaunchSession) => void
+  safeExecutionHashes?: Partial<Record<PageChainId, Hex>>
+}): Promise<PageLaunchSession> {
+  return withPageLaunchLock(async () => {
+    const session = loadPageLaunch()
+    if (!session || session.id !== args.session.id || !isAddressEqual(session.owner, args.owner)) throw new Error('The saved launch changed. Reload before continuing.')
+    requireOwner(args.owner)
+    const persist = () => { savePageLaunch(session); args.onSession?.(structuredClone(session)) }
+    if (session.transport === 'direct') {
+      for (const [id, hash] of Object.entries(args.safeExecutionHashes ?? {})) {
+        const record = session.direct[Number(id) as PageChainId]
+        if (!record?.safeProposal || !hash || !/^0x[0-9a-fA-F]{64}$/.test(hash)) throw new Error('Enter an execution hash for one of the saved Safe proposals.')
+        record.hash = hash
+        persist()
+      }
+      await runDirect(session, args.onStep, persist)
+    } else {
+      if (['payment-sending', 'submitted', 'executing'].includes(session.phase)) throw new Error('Check the original Relayr payment before requesting any quote.')
+      await quoteSession(session, args.onStep, persist)
+    }
+    return structuredClone(session)
+  })
+}
+
+/** One explicitly chosen quoted payment, then canonical receipt checks on every destination. */
 export async function launchQuotedPage(args: {
   quoted: QuotedLaunch
-  payment: ChainPayment
+  payment?: ChainPayment
   owner: Address
   onStep: (step: string) => void
+  onSession?: (session: PageLaunchSession) => void
   onProgress: (states: { chainId: number; state: string; hash?: Hex }[]) => void
 }): Promise<LaunchedPage[]> {
-  args.onStep(`Pay on ${chainName(args.payment.chain)} in your wallet`)
-  await payQuote(args.payment, args.owner)
-  args.onStep('Relayr is launching on each network')
-  const bundle = await waitForBundle(args.quoted.quote.bundle_uuid, update =>
-    args.onProgress(
-      // Records come back in submission order, the order the chains were signed in.
-      update.transactions.map((transaction, index) => ({
-        chainId: args.quoted.chainIds[index] ?? Number(transaction.request?.chain),
-        state: transaction.status?.state ?? 'Pending',
-        hash: bundleHash(transaction),
-      })),
-    ),
-  )
-  const launched: LaunchedPage[] = []
-  for (const [index, transaction] of bundle.transactions.entries()) {
-    const chainId = args.quoted.chainIds[index]
-    const hash = bundleHash(transaction)
-    if (!hash) continue
-    const receipt = await client(chainId).getTransactionReceipt({ hash })
-    const projectId = projectIdFromLogs(receipt.logs, chainId)
-    if (projectId !== null) launched.push({ chainId, projectId, hash })
-  }
-  if (!launched.length) throw new Error('Relayr finished but no launch could be read back. Check the transactions on each network.')
-  return launched
+  return withPageLaunchLock(async () => {
+    const session = loadPageLaunch()
+    if (!session || session.id !== args.quoted.id || !isAddressEqual(session.owner, args.owner)) throw new Error('The saved launch changed. Reload before continuing.')
+    requireOwner(args.owner)
+    const persist = () => { savePageLaunch(session); args.onSession?.(structuredClone(session)) }
+    if (session.transport === 'direct') return runDirect(session, args.onStep, persist)
+    if (!session.quote || session.signed.length !== session.chainIds.length) throw new Error('Resume signing this saved launch first.')
+    assertForwardRequestBindings(launchCalls(session), session.owner, session.signed)
+    const fundingStarted = ['payment-sending', 'submitted', 'executing', 'complete'].includes(session.phase)
+    if (fundingStarted && session.paymentHash && session.payment) {
+      const hash = session.paymentHash
+      const payment = session.payment
+      const rpc = client(payment.chain as PageChainId)
+      // A temporary payment RPC outage does not prevent checking destination evidence.
+      const evidence = await Promise.all([rpc.getTransaction({ hash }), rpc.getTransactionReceipt({ hash })])
+        .then(async ([tx, receipt]) => ({ tx, receipt, block: await rpc.getBlock({ blockNumber: receipt.blockNumber }) }))
+        .catch(() => null)
+      if (evidence) {
+        const { tx, receipt, block } = evidence
+        if (tx.hash !== hash || receipt.transactionHash !== hash || tx.chainId !== payment.chain ||
+            !tx.to || !isAddressEqual(tx.to, payment.target) || !isAddressEqual(tx.from, session.owner) ||
+            tx.input.toLowerCase() !== payment.calldata.toLowerCase() || tx.value !== BigInt(payment.amount) ||
+            tx.blockHash !== receipt.blockHash || block.hash !== receipt.blockHash) throw new Error('The saved payment could not be verified. Keep checking the original launch without another payment.')
+        if (receipt.status === 'reverted') {
+          const finalized = await rpc.getBlock({ blockTag: 'finalized' })
+          const canonical = await rpc.getBlock({ blockNumber: finalized.number })
+          const receiptBlock = await rpc.getBlock({ blockNumber: receipt.blockNumber })
+          if (finalized.hash !== canonical.hash || receiptBlock.hash !== receipt.blockHash || receipt.blockNumber > finalized.number) {
+            throw new Error('The original payment reverted but is not finalized. Check again before another payment.')
+          }
+          session.failedPayments = [...(session.failedPayments ?? []), { chainId: payment.chain, hash }]
+          delete session.paymentHash
+          delete session.payment
+          session.phase = 'quoted'
+          persist()
+          throw new Error('The original Relayr payment reverted on chain. Choose a quote again to retry that payment.')
+        }
+      }
+    }
+    if (!fundingStarted) {
+      if (session.phase !== 'quoted') throw new Error('Resume the saved Relayr quote before choosing a payment.')
+      const selected = args.payment && paymentOptions(session.quote, session.chainIds).find(item => item.chain === args.payment!.chain &&
+        item.target.toLowerCase() === args.payment!.target.toLowerCase() && item.calldata.toLowerCase() === args.payment!.calldata.toLowerCase() && BigInt(item.amount) === BigInt(args.payment!.amount))
+      if (!selected) throw new Error('Choose one of the current Relayr quote options before paying.')
+      args.onStep(`Pay on ${chainName(selected.chain)} in your wallet`)
+      session.payment = structuredClone(selected)
+      persist()
+      try {
+        await payQuote(selected, args.owner, { bundleUuid: session.quote.bundle_uuid, destinationChainIds: session.chainIds,
+          reverify: async () => {
+            await verifyForwardRequests(launchCalls(session), session.owner, session.signed)
+            for (const quote of [session.quote!, ...(session.previousQuotes ?? [])]) {
+              const original = await getBundle(quote.bundle_uuid, session.signed.map(item => item.entry), quote.expectedTransactions)
+              if (original.payment_received || original.transactions.some(item => bundleHash(item))) {
+                session.phase = 'executing'; persist()
+                throw new Error('Relayr already has funding or execution evidence for this launch. Check its original status without another payment.')
+              }
+            }
+          },
+          onSending: () => { session.phase = 'payment-sending'; persist() },
+          onSubmitted: hash => { session.paymentHash = hash; session.phase = 'submitted'; persist() },
+        })
+      } catch (error) {
+        if (rejected(error) && !session.paymentHash) { session.phase = 'quoted'; delete session.payment; persist() }
+        throw error
+      }
+    }
+    args.onStep('Checking the original Relayr launch on every network')
+    const entries = session.signed.map(item => item.entry)
+    let statusError: unknown
+    for (let attempt = 0; attempt < 24; attempt++) {
+      for (const quote of [session.quote, ...(session.previousQuotes ?? [])]) {
+        try {
+          const update = await getBundle(quote.bundle_uuid, entries, quote.expectedTransactions)
+          for (const transaction of update.transactions) {
+            const hash = bundleHash(transaction)
+            if (!hash) continue
+            const chainId = transaction.request.chain as PageChainId
+            session.candidates = { ...session.candidates,
+              [chainId]: [...new Set([...(session.candidates?.[chainId] ?? []), hash])] }
+          }
+          persist()
+        } catch (error) { statusError = error }
+      }
+      // Persist and verify each available destination even while another chain or the API is unavailable.
+      for (const entry of entries) {
+        const chainId = entry.chain as PageChainId
+        const known = session.launched.find(item => item.chainId === chainId)?.hash
+        const hashes = [...new Set([...(known ? [known] : []), ...(session.candidates?.[chainId] ?? [])])]
+        let confirmed: LaunchedPage | undefined
+        for (const hash of hashes) {
+          try {
+            confirmed = await confirmedPage({ chainId, to: entry.target, data: entry.data, value: BigInt(entry.value) }, hash)
+            break
+          } catch (error) { statusError = error }
+        }
+        session.launched = session.launched.filter(item => item.chainId !== chainId)
+        if (confirmed) session.launched.push(confirmed)
+        persist()
+      }
+      args.onProgress(session.chainIds.map(chainId => ({ chainId,
+        state: session.launched.some(item => item.chainId === chainId) ? 'Completed' : 'Checking confirmation',
+        hash: session.launched.find(item => item.chainId === chainId)?.hash ?? session.candidates?.[chainId]?.[0] })))
+      if (session.launched.length === session.chainIds.length) break
+      if (statusError || attempt === 23) throw statusError ?? new Error('Some destinations are still pending. Check the original launch again without another payment.')
+      await new Promise(resolve => setTimeout(resolve, 2500))
+    }
+    session.phase = 'complete'
+    persist()
+    return structuredClone(session.launched)
+  })
+}
+
+/** Single-network creation uses the same durable direct-send recovery as an omnichain Safe launch. */
+export async function createPage(args: Omit<LaunchArgs, 'chainIds'> & { chainId: PageChainId }): Promise<LaunchedPage> {
+  const session = await quoteMultichainPage({ ...args, chainIds: [args.chainId] })
+  return session.launched[0]
 }
 
 /** A one-line reason a wallet call failed, without viem's multi-paragraph dump. */

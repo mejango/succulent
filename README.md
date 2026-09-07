@@ -9,7 +9,17 @@ row grammar as the Latest rail on juicebox.money.
 and sends one `pay` to the Page's terminal. A zero-value pay is a valid memo-only post. **Create a
 page** pins a name and optional logo through juicebox.center, then launches the simplest open-ended
 project (`src/lib/page-launch.ts`): ETH in, rules changeable any time, owner may mint and use surplus,
-cash outs off. Wallets: the browser's injected wallet only, so on phones open it inside a wallet app.
+cash outs off. Wallets include injected wallets, WalletConnect, Coinbase, Safe, and optional Para sign-in.
+
+Multi-network creation uses Relayr on either the four mainnets or the four Sepolia testnets. The
+launch is saved before signing; each chain's authorization and every quote remain available after a
+reload. Only after Relayr returns and binds its quote to the exact signed calls does the payer choose
+a funding chain and its quoted ETH cost. One payment covers destination gas and creation fees.
+Single-network launches and Safe or non-forwarding targets use direct wallet transactions with the
+same saved-launch recovery. Safe execution hashes can be supplied when its service is unavailable.
+An interrupted payment or launch stays pending until its original transactions are verified on chain;
+resuming never automatically repeats an uncertain wallet submission. Launch recovery requires browser
+storage and Web Locks. The name, logo, splits, and networks stay fixed while a launch is pending.
 
 juicebox.center allowlists pin requests by Origin. `extensions/jbcenter` has `https://succulent.money`,
 `https://dev.succulent.money`, and `http://localhost:3004` added; until that deploys, Create a page fails

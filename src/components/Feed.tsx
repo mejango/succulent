@@ -280,7 +280,7 @@ function Row({
       >
         {relative}
       </time>
-      <div className="relative border-l border-bloom py-3.5 pl-4 pr-4">
+      <div className="relative min-w-0 border-l border-bloom py-3.5 pl-4 pr-4">
         {/* The leaf node on the stem. */}
         <span aria-hidden className="absolute -left-[3.5px] top-[1.15rem] size-1.5 rounded-full bg-pine" />
         <div className="flex items-center gap-2.5">
