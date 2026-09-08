@@ -14,7 +14,7 @@ module.exports = {
           {
             key: 'Content-Security-Policy',
             value:
-              "frame-ancestors https://app.safe.global https://app.5afe.dev; img-src 'self' data: blob: https://juicebox.center https://partner-assets.getpara.com",
+              "frame-ancestors https://app.safe.global https://app.5afe.dev https://plugin.money https://www.plugin.money; img-src 'self' data: blob: https://juicebox.center https://partner-assets.getpara.com",
           },
         ],
       },

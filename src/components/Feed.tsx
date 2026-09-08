@@ -361,7 +361,7 @@ function Row({
         {amount ? (
           <p
             className={`mt-2 font-mono text-sm font-medium ${
-              direction === 'in' ? 'text-moss' : direction === 'out' ? 'text-rose' : 'text-pine'
+              direction === 'in' ? 'text-inflow' : direction === 'out' ? 'text-rose' : 'text-pine'
             }`}
           >
             {direction === 'in' ? '+' : direction === 'out' ? '−' : ''}
