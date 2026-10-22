@@ -1,4 +1,4 @@
-FROM node:26.5.0-bookworm-slim AS base
+FROM node:26.12.1-bookworm-slim AS base
 ENV NEXT_TELEMETRY_DISABLED=1
 WORKDIR /app
 
